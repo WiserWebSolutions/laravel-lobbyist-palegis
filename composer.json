@@ -1,0 +1,65 @@
+{
+    "name": "wiserwebsolutions/laravel-lobbyist-palegis",
+    "description": "Pennsylvania (palegis.us) RSS-feed driver for the laravel-lobbyist package.",
+    "keywords": [
+        "WiserWebSolutions",
+        "laravel",
+        "laravel-lobbyist",
+        "pennsylvania",
+        "legislation"
+    ],
+    "homepage": "https://github.com/wiserwebsolutions/laravel-lobbyist-palegis",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Daniel Wiser",
+            "email": "dan@wiserwebsolutions.com",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "illuminate/support": "^11.0|^12.0",
+        "illuminate/http": "^11.0|^12.0",
+        "spatie/laravel-data": "^4.20",
+        "wiserwebsolutions/laravel-lobbyist": "*"
+    },
+    "require-dev": {
+        "larastan/larastan": "^2.9||^3.0",
+        "laravel/pint": "^1.14",
+        "orchestra/testbench": "^9.0||^10.0",
+        "phpunit/phpunit": "^10.5||^11.0",
+        "mockery/mockery": "^1.6",
+        "wiserwebsolutions/laravel-lobbyist-legiscan": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "WiserWebSolutions\\LaravelPalegis\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "WiserWebSolutions\\LaravelPalegis\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "analyse": "vendor/bin/phpstan analyse",
+        "test": "vendor/bin/phpunit",
+        "format": "vendor/bin/pint"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "WiserWebSolutions\\LaravelPalegis\\LaravelPalegisServiceProvider"
+            ],
+            "aliases": {
+                "Palegis": "WiserWebSolutions\\LaravelPalegis\\Facades\\LaravelPalegis"
+            }
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
