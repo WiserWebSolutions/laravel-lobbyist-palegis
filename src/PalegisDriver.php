@@ -56,13 +56,13 @@ class PalegisDriver extends AbstractDriver implements BillLookup, BillProvider, 
             $bills = [];
 
             foreach ($this->client->eachBillHistoryRecord() as $record) {
-                $bills[] = PalegisMapper::billFromHistory($record);
+                $bills[] = PalegisMapper::billSummaryFromHistory($record);
             }
         } catch (BillHistoryCacheMiss) {
             // A per-bill cache entry expired mid-stream; discard whatever
             // was built above and do one consistent resync + rebuild.
             $bills = array_map(
-                fn (array $record) => PalegisMapper::billFromHistory($record),
+                fn (array $record) => PalegisMapper::billSummaryFromHistory($record),
                 $this->client->syncBillHistory()['bills'] ?? []
             );
         }

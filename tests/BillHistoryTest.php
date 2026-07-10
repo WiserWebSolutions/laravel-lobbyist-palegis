@@ -60,6 +60,10 @@ class BillHistoryTest extends TestCase
         $this->assertSame('Reported as committed, March 12, 2025', $hb->lastAction);
         $this->assertSame('2025-03-12', $hb->lastActionDate?->format('Y-m-d'));
         $this->assertStringContainsString('HB0017/PN0002', $hb->url);
+
+        // bills() returns lightweight summaries — sponsors/full action
+        // history aren't retained on every item in a large listing.
+        $this->assertArrayNotHasKey('raw', $hb->meta);
     }
 
     public function test_driver_bill_lookup_by_designator_and_id(): void
@@ -71,6 +75,19 @@ class BillHistoryTest extends TestCase
         $this->assertSame('HB17', $driver->bill('hb0017')->number);   // case + leading zeros
         $this->assertSame('HB17', $driver->bill('20250HB0017')->number); // full id
         $this->assertSame(Chamber::Senate, $driver->bill('SB100')->chamber);
+    }
+
+    public function test_driver_bill_lookup_still_includes_full_raw_detail(): void
+    {
+        $this->fakeBillHistory();
+
+        $hb = $this->driver()->setStateContext('PA')->bill('HB17');
+
+        // Unlike bills(), a single bill() lookup can afford to keep the
+        // full sponsors/printer/action history — only one record at a time.
+        $this->assertArrayHasKey('raw', $hb->meta);
+        $this->assertCount(2, $hb->meta['raw']['sponsors']);
+        $this->assertCount(2, $hb->meta['raw']['actions']);
     }
 
     public function test_driver_bill_lookup_throws_when_not_found(): void

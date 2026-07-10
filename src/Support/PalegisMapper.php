@@ -19,14 +19,35 @@ use WiserWebSolutions\Lobbyist\Enums\StateEnum;
 class PalegisMapper
 {
     /**
-     * Map a Bill History Data record (see LaravelPalegis::getBillHistory()) to a Bill.
+     * Map a Bill History Data record (see LaravelPalegis::getBillHistory()) to
+     * a full-detail Bill for a single-bill lookup, preserving the raw record
+     * (sponsors, full action history, full printer-number history) since
+     * only one record is materialized at a time.
      */
     public static function billFromHistory(array $record): Bill
+    {
+        return self::billDto($record, includeRaw: true);
+    }
+
+    /**
+     * Map a Bill History Data record to a lightweight-summary Bill, for
+     * listing every bill in a session at once. Omits the raw record
+     * (sponsors, complete action history, complete printer-number history)
+     * — a session can hold thousands of bills, and retaining full detail on
+     * every one of them when only the summary fields are needed is the
+     * majority of the memory cost of listing them all.
+     */
+    public static function billSummaryFromHistory(array $record): Bill
+    {
+        return self::billDto($record, includeRaw: false);
+    }
+
+    private static function billDto(array $record, bool $includeRaw): Bill
     {
         $lastAction = ! empty($record['actions']) ? end($record['actions']) : null;
         $lastPrinters = ! empty($record['printers_numbers']) ? end($record['printers_numbers']) : null;
 
-        return new Bill(meta: [
+        $meta = [
             'id' => $record['id'] ?? '',
             'number' => $record['designator'] ?? '',
             'title' => $record['short_title'] ?? '',
@@ -36,8 +57,13 @@ class PalegisMapper
             'last_action' => $lastAction['full_action'] ?? '',
             'last_action_date' => $lastAction['date'] ?? null,
             'url' => $lastPrinters['pdf_url'] ?? '',
-            'raw' => $record,
-        ]);
+        ];
+
+        if ($includeRaw) {
+            $meta['raw'] = $record;
+        }
+
+        return new Bill(meta: $meta);
     }
 
     public static function vote(array $item, Chamber $chamber): Vote
