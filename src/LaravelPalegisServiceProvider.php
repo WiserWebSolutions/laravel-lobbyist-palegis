@@ -26,7 +26,7 @@ class LaravelPalegisServiceProvider extends ServiceProvider
         // regardless of provider boot order.
         $this->app->resolving('lobbyist', function (LobbyistManager $manager) {
             $manager->extend('pa', fn () => new PalegisDriver(
-                $this->app->make(LaravelPalegis::class)
+                app(LaravelPalegis::class)
             ));
         });
     }
