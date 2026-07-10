@@ -2,20 +2,17 @@
 
 namespace WiserWebSolutions\LaravelPalegis;
 
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
+use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCache;
+use WiserWebSolutions\LaravelPalegis\Support\BillHistoryFetcher;
+use WiserWebSolutions\LaravelPalegis\Support\BillIdentifier;
+use WiserWebSolutions\LaravelPalegis\Support\Concerns\FetchesHttp;
 
 class LaravelPalegis
 {
-    /**
-     * Base URL for the palegis.us bulk-data download endpoint.
-     */
-    private const BILL_HISTORY_BASE_URL = 'https://www.palegis.us/data/file';
+    use FetchesHttp;
 
     /**
      * RSS endpoints configuration.
@@ -38,6 +35,16 @@ class LaravelPalegis
     protected array $data;
 
     /**
+     * Downloads and parses the Bill History Data export.
+     */
+    protected BillHistoryFetcher $fetcher;
+
+    /**
+     * Caches the Bill History export per-bill.
+     */
+    protected BillHistoryCache $billHistoryCache;
+
+    /**
      * Constructor to initialize the Palegis client with configuration settings.
      *
      * @throws PalegisException When required configuration is missing
@@ -52,6 +59,12 @@ class LaravelPalegis
         if (empty($this->endpoints)) {
             throw new PalegisException('RSS endpoints configuration is missing');
         }
+
+        $this->fetcher = new BillHistoryFetcher;
+        $this->billHistoryCache = new BillHistoryCache(
+            Cache::store($this->cache['store'] ?? null),
+            $this->data['ttl'] ?? ($this->cache['ttl'] ?? null),
+        );
     }
 
     /**
@@ -117,41 +130,6 @@ class LaravelPalegis
         }
 
         return $this->parseRssXml($xml);
-    }
-
-    /**
-     * Perform a GET request and return the raw body, throwing an informative
-     * PalegisException (including the attempted URL) on any failure.
-     *
-     * @param  string|null  $notFoundHint  Extra guidance to include on a 404
-     *
-     * @throws PalegisException
-     */
-    protected function fetchBody(string $url, ?string $notFoundHint = null): string
-    {
-        Log::debug('palegis request: '.$url);
-
-        try {
-            $response = Http::timeout($this->request['timeout'] ?? 30)
-                ->retry($this->request['retry_times'] ?? 2, $this->request['retry_sleep_ms'] ?? 200)
-                ->get($url);
-        } catch (RequestException $e) {
-            $status = $e->response?->status();
-            throw PalegisException::requestFailed($url, $status, $this->hintFor($status, $notFoundHint), $e);
-        } catch (ConnectionException $e) {
-            throw PalegisException::requestFailed($url, null, 'Could not connect to palegis.us: '.$e->getMessage(), $e);
-        }
-
-        if ($response->failed()) {
-            throw PalegisException::requestFailed($url, $response->status(), $this->hintFor($response->status(), $notFoundHint));
-        }
-
-        return $response->body();
-    }
-
-    private function hintFor(?int $status, ?string $notFoundHint): ?string
-    {
-        return ($status === 404 && $notFoundHint !== null) ? $notFoundHint : null;
     }
 
     /**
@@ -357,14 +335,15 @@ class LaravelPalegis
     // -----------------------------------------------------------------
 
     /**
-     * Fetch and parse the Bill History Data export for a session.
+     * Fetch the Bill History Data export for a session, keyed per bill in
+     * cache. Every bill and resolution in the session with its sponsors,
+     * printer numbers, and full action history.
      *
-     * Every bill and resolution in the session with its sponsors, printer
-     * numbers, and full action history. The source is a ZIP-wrapped XML
-     * document; it is downloaded, extracted, parsed, and cached.
-     *
-     * NOTE: the export is large (thousands of bills / tens of MB uncompressed);
-     * parsing loads the whole document into memory.
+     * If the cache has been populated (typically by the scheduled
+     * `palegis:sync-bill-history` command), this reassembles the result
+     * from the per-bill cache entries without a live download. On a cold or
+     * expired cache it falls back to downloading and parsing the export
+     * directly, populating the cache for next time.
      *
      * @param  string|null  $session  palegis session id (e.g. "2025_0"); null
      *                                auto-detects the current regular session.
@@ -376,13 +355,73 @@ class LaravelPalegis
     public function getBillHistory(?string $session = null, ?int $ttl = null): array
     {
         $session ??= $this->currentSession();
-        $url = $this->billHistoryUrl($session);
 
-        return $this->remember(
-            'bill-history:'.$session,
-            fn () => $this->fetchAndParseBillHistory($url, $session),
-            $ttl ?? ($this->data['ttl'] ?? null),
-        );
+        if (! ($this->cache['enabled'] ?? false)) {
+            return $this->fetcher->fetch($session);
+        }
+
+        return $this->billHistoryCache->all($session) ?? $this->syncBillHistory($session, $ttl);
+    }
+
+    /**
+     * Download, parse, and cache the Bill History Data export for a
+     * session, one cache entry per bill. This is the reusable "sync"
+     * operation shared by the `palegis:sync-bill-history` command and the
+     * live fallback inside {@see getBillHistory()}.
+     *
+     * @return array{export_date: string, total: int, session: string, bills: array<int, array>}
+     *
+     * @throws PalegisException
+     */
+    public function syncBillHistory(?string $session = null, ?int $ttl = null): array
+    {
+        $session ??= $this->currentSession();
+
+        $parsed = $this->fetcher->fetch($session);
+
+        if ($this->cache['enabled'] ?? false) {
+            $this->billHistoryCache->put($session, $parsed, $ttl ?? ($this->data['ttl'] ?? null));
+        }
+
+        return $parsed;
+    }
+
+    /**
+     * Look up a single bill's raw Bill History record by id or designator,
+     * without materializing the full bill list when the cache can answer
+     * directly.
+     *
+     * @return array|null The raw bill record, or null if not found
+     *
+     * @throws PalegisException
+     */
+    public function findBill(?string $session, string $identifier): ?array
+    {
+        $session ??= $this->currentSession();
+
+        if (! ($this->cache['enabled'] ?? false)) {
+            return $this->scanBills($this->fetcher->fetch($session)['bills'] ?? [], $identifier);
+        }
+
+        if ($this->billHistoryCache->hasIndex($session)) {
+            return $this->billHistoryCache->find($session, $identifier);
+        }
+
+        return $this->scanBills($this->syncBillHistory($session)['bills'] ?? [], $identifier);
+    }
+
+    /**
+     * @param  array<int, array>  $bills
+     */
+    private function scanBills(array $bills, string $identifier): ?array
+    {
+        foreach ($bills as $record) {
+            if (BillIdentifier::matches($record, $identifier)) {
+                return $record;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -396,189 +435,5 @@ class LaravelPalegis
         $start = $year % 2 === 0 ? $year - 1 : $year;
 
         return $start.'_0';
-    }
-
-    /**
-     * Build the Bill History Data download URL for a session.
-     */
-    protected function billHistoryUrl(string $session): string
-    {
-        return self::BILL_HISTORY_BASE_URL.'?'.http_build_query([
-            'documentType' => 'BillHistoryData',
-            'session' => $session,
-        ]);
-    }
-
-    /**
-     * Download the Bill History ZIP, extract its XML, and parse it.
-     *
-     * @throws PalegisException
-     */
-    protected function fetchAndParseBillHistory(string $url, string $session): array
-    {
-        $body = $this->fetchBody(
-            $url,
-            "The session [{$session}] may be invalid or not yet published. "
-            ."Session ids look like '2025_0' (regular) or '2025_1' (special session)."
-        );
-
-        $xmlString = $this->extractXmlFromZip($body);
-
-        $previous = libxml_use_internal_errors(true);
-
-        try {
-            $xml = simplexml_load_string($xmlString);
-        } finally {
-            libxml_clear_errors();
-            libxml_use_internal_errors($previous);
-        }
-
-        if ($xml === false) {
-            throw new PalegisException('Invalid XML in Bill History export');
-        }
-
-        return $this->parseBillHistoryXml($xml, $session);
-    }
-
-    /**
-     * Extract the first XML entry from a ZIP archive given as a binary string.
-     *
-     * @throws PalegisException
-     */
-    protected function extractXmlFromZip(string $zipBinary): string
-    {
-        $tmp = tempnam(sys_get_temp_dir(), 'palegis_bh_');
-
-        if ($tmp === false) {
-            throw new PalegisException('Unable to create a temp file for the Bill History archive');
-        }
-
-        try {
-            file_put_contents($tmp, $zipBinary);
-
-            $zip = new \ZipArchive;
-
-            if ($zip->open($tmp) !== true) {
-                throw new PalegisException('Unable to open the Bill History archive');
-            }
-
-            $contents = false;
-
-            for ($i = 0; $i < $zip->numFiles; $i++) {
-                if (str_ends_with(strtolower((string) $zip->getNameIndex($i)), '.xml')) {
-                    $contents = $zip->getFromIndex($i);
-                    break;
-                }
-            }
-
-            $zip->close();
-        } finally {
-            @unlink($tmp);
-        }
-
-        if (! is_string($contents) || $contents === '') {
-            throw new PalegisException('No XML entry found in the Bill History archive');
-        }
-
-        return $contents;
-    }
-
-    /**
-     * Parse a Bill History <historyExport> document into a structured array.
-     *
-     * @return array{export_date: string, total: int, session: string, bills: array<int, array>}
-     */
-    protected function parseBillHistoryXml(\SimpleXMLElement $xml, string $session): array
-    {
-        $bills = [];
-
-        foreach ($xml->session as $sessionNode) {
-            foreach ($sessionNode->bill as $bill) {
-                $bills[] = $this->parseBillHistoryBill($bill);
-            }
-        }
-
-        return [
-            'export_date' => (string) $xml['exportDate'],
-            'total' => (int) $xml['totalDocuments'],
-            'session' => $session,
-            'bills' => $bills,
-        ];
-    }
-
-    /**
-     * Parse a single <bill> node from the Bill History export.
-     */
-    protected function parseBillHistoryBill(\SimpleXMLElement $bill): array
-    {
-        $id = (string) $bill['id'];
-
-        $sponsors = [];
-        foreach ($bill->sponsors->sponsor as $sponsor) {
-            $sponsors[] = [
-                'name' => (string) $sponsor,
-                'party' => (string) $sponsor['party'],
-                'body' => (string) $sponsor['body'],
-                'district' => (string) $sponsor['districtNumber'],
-                'sequence' => (string) $sponsor['sequenceNumber'],
-            ];
-        }
-
-        $printersNumbers = [];
-        foreach ($bill->printersNumberHistory->number as $number) {
-            $printersNumbers[] = [
-                'sequence' => (string) $number['sequence'],
-                'number' => (string) $number,
-                'pdf_url' => (string) $number['billTextPdfUrl'],
-            ];
-        }
-
-        $actions = [];
-        foreach ($bill->actionHistory->action as $action) {
-            $actions[] = [
-                'sequence' => (string) $action['sequence'],
-                'chamber' => (string) $action['actionChamber'],
-                'verb' => (string) $action->verb,
-                'committee' => (string) $action->committee,
-                'date' => (string) $action->date,
-                'printers_number' => (string) $action->printersNumber,
-                'roll_call' => (string) $action->rollCallVote,
-                'full_action' => (string) $action->fullAction,
-            ];
-        }
-
-        return [
-            'id' => $id,
-            'last_update' => (string) $bill['lastUpdate'],
-            'session_year' => (string) $bill->sessionYear,
-            'session' => (string) $bill->session,
-            'body' => (string) $bill->body,
-            'type' => (string) $bill->type,
-            'type_description' => (string) $bill->type['description'],
-            'sub_type' => (string) $bill->subType,
-            'number' => (string) $bill->number,
-            'designator' => $this->billDesignatorFromId($id),
-            'short_title' => (string) $bill->shortTitle,
-            'cosponsorship_memo' => [
-                'text' => (string) $bill->cosponsorshipMemo,
-                'url' => (string) $bill->cosponsorshipMemo['memoUrl'],
-            ],
-            'sponsors' => $sponsors,
-            'printers_numbers' => $printersNumbers,
-            'actions' => $actions,
-        ];
-    }
-
-    /**
-     * Derive a human bill designator (e.g. "HB17") from a bill id
-     * like "20250HB0017".
-     */
-    protected function billDesignatorFromId(string $id): string
-    {
-        if (preg_match('/([A-Z]+)(\d+)$/', $id, $matches)) {
-            return $matches[1].ltrim($matches[2], '0');
-        }
-
-        return $id;
     }
 }

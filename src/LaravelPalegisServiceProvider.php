@@ -3,6 +3,7 @@
 namespace WiserWebSolutions\LaravelPalegis;
 
 use Illuminate\Support\ServiceProvider;
+use WiserWebSolutions\LaravelPalegis\Console\Commands\SyncBillHistoryCommand;
 use WiserWebSolutions\Lobbyist\LobbyistManager;
 
 class LaravelPalegisServiceProvider extends ServiceProvider
@@ -20,13 +21,17 @@ class LaravelPalegisServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__.'/../config/palegis.php' => config_path('palegis.php'),
             ], 'palegis-config');
+
+            $this->commands([
+                SyncBillHistoryCommand::class,
+            ]);
         }
 
         // Register the PA driver with the core Lobbyist manager, lazily and
         // regardless of provider boot order.
         $this->app->resolving('lobbyist', function (LobbyistManager $manager) {
-            $manager->extend('pa', fn () => new PalegisDriver(
-                app(LaravelPalegis::class)
+            $manager->extend('pa', fn ($app) => new PalegisDriver(
+                $app->make(LaravelPalegis::class)
             ));
         });
     }

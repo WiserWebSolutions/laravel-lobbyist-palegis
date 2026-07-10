@@ -61,13 +61,13 @@ class PalegisDriver extends AbstractDriver implements BillLookup, BillProvider, 
 
     public function bill(string|int $identifier): Bill
     {
-        foreach ($this->client->getBillHistory()['bills'] ?? [] as $record) {
-            if ($this->billMatches($record, (string) $identifier)) {
-                return PalegisMapper::billFromHistory($record);
-            }
+        $record = $this->client->findBill(null, (string) $identifier);
+
+        if ($record === null) {
+            throw new PalegisException("Bill [{$identifier}] was not found in the PA bill history.");
         }
 
-        throw new PalegisException("Bill [{$identifier}] was not found in the PA bill history.");
+        return PalegisMapper::billFromHistory($record);
     }
 
     public function votes(): VoteCollection
@@ -90,25 +90,6 @@ class PalegisDriver extends AbstractDriver implements BillLookup, BillProvider, 
         }
 
         return new LegislatorCollection($legislators);
-    }
-
-    /**
-     * Whether a Bill History record matches a caller-supplied identifier,
-     * accepting the full id ("20250HB0017") or the designator ("HB17"/"HB0017",
-     * case-insensitive, leading zeros optional).
-     */
-    private function billMatches(array $record, string $identifier): bool
-    {
-        $normalize = fn (string $value) => preg_replace(
-            '/^([A-Z]+)0*(\d+)$/',
-            '$1$2',
-            strtoupper(preg_replace('/\s+/', '', $value))
-        );
-
-        $needle = $normalize($identifier);
-
-        return strtoupper((string) ($record['id'] ?? '')) === strtoupper($identifier)
-            || $normalize((string) ($record['designator'] ?? '')) === $needle;
     }
 
     /**

@@ -79,8 +79,18 @@ return [
     | The Bill History Data export (a ZIP-wrapped XML listing every bill and
     | resolution in a session, refreshed hourly on weekdays) is downloaded from
     | a fixed palegis.us endpoint. The URL is generated automatically and the
-    | session defaults to the current regular session, so there is nothing to
-    | configure here except how long to cache the (large) download.
+    | session defaults to the current regular session.
+    |
+    | Rather than caching the (large) export as a single blob, each bill is
+    | cached under its own key, so no cache write ever has to serialize more
+    | than one bill's data at a time. Run `php artisan palegis:sync-bill-history`
+    | to populate/refresh the cache; getBillHistory()/bill() lookups fall back
+    | to a live download automatically if the cache is cold or has expired.
+    |
+    | To keep the cache warm, schedule the sync command in the app's own
+    | console kernel/routes, e.g.:
+    |
+    |     Schedule::command('palegis:sync-bill-history')->hourly();
     |
     */
     'data' => [

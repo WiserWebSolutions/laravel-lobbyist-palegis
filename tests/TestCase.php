@@ -62,4 +62,97 @@ abstract class TestCase extends Orchestra
             .$itemsXml
             .'</channel></rss>';
     }
+
+    /**
+     * Fake the Bill History download with a ZIP-wrapped XML fixture (two bills).
+     */
+    protected function fakeBillHistory(): void
+    {
+        $xml = <<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<historyExport exportDate="July 9, 2026 7:30:08 PM EDT" totalDocuments="2">
+    <session year="2025" session="0">
+        <bill id="20250HB0017" lastUpdate="May 13, 2026 12:05:00 PM EDT">
+            <sessionYear>2025</sessionYear>
+            <session>0</session>
+            <body>H</body>
+            <type description="House Bill">B</type>
+            <subType>B</subType>
+            <number>0017</number>
+            <shortTitle>An Act providing for cursive handwriting instruction.</shortTitle>
+            <cosponsorshipMemo memoUrl="https://www.palegis.us/house/co-sponsorship/memo?memoID=43567">Mandating Cursive Handwriting</cosponsorshipMemo>
+            <sponsors>
+                <sponsor sequenceNumber="01" fillSequence="0" party="R" body="H" districtNumber="116">WATRO</sponsor>
+                <sponsor sequenceNumber="02" fillSequence="0" party="D" body="H" districtNumber="174">NEILSON</sponsor>
+            </sponsors>
+            <printersNumberHistory>
+                <number sequence="01" billTextPdfUrl="https://www.palegis.us/legislation/bills/text/PDF/2025/0/HB0017/PN0002">0002</number>
+            </printersNumberHistory>
+            <actionHistory>
+                <action sequence="01" actionChamber="H">
+                    <verb>Referred to</verb>
+                    <committee>EDUCATION</committee>
+                    <date>01/08/25</date>
+                    <printersNumber>0002</printersNumber>
+                    <rollCallVote></rollCallVote>
+                    <fullAction>Referred to EDUCATION, Jan. 8, 2025</fullAction>
+                </action>
+                <action sequence="02" actionChamber="H">
+                    <verb>Reported as committed,</verb>
+                    <committee>EDUCATION</committee>
+                    <date>03/12/25</date>
+                    <printersNumber>0002</printersNumber>
+                    <rollCallVote></rollCallVote>
+                    <fullAction>Reported as committed, March 12, 2025</fullAction>
+                </action>
+            </actionHistory>
+        </bill>
+        <bill id="20250SB0100" lastUpdate="Feb 1, 2026 9:00:00 AM EST">
+            <sessionYear>2025</sessionYear>
+            <session>0</session>
+            <body>S</body>
+            <type description="Senate Bill">B</type>
+            <subType>B</subType>
+            <number>0100</number>
+            <shortTitle>An Act concerning appropriations.</shortTitle>
+            <sponsors></sponsors>
+            <printersNumberHistory></printersNumberHistory>
+            <actionHistory>
+                <action sequence="01" actionChamber="S">
+                    <verb>Introduced and referred to</verb>
+                    <committee>APPROPRIATIONS</committee>
+                    <date>02/01/25</date>
+                    <printersNumber>0101</printersNumber>
+                    <rollCallVote></rollCallVote>
+                    <fullAction>Introduced and referred to APPROPRIATIONS, Feb. 1, 2025</fullAction>
+                </action>
+            </actionHistory>
+        </bill>
+    </session>
+</historyExport>
+XML;
+
+        $zipBytes = $this->zipString('PA-Bill-History-2025-RegularSession.xml', $xml);
+
+        Http::fake([
+            'www.palegis.us/data/file*' => Http::response($zipBytes, 200),
+        ]);
+    }
+
+    /**
+     * Build an in-memory ZIP archive containing a single named entry.
+     */
+    protected function zipString(string $entryName, string $contents): string
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'palegis_test_zip_');
+        $zip = new \ZipArchive;
+        $zip->open($tmp, \ZipArchive::OVERWRITE);
+        $zip->addFromString($entryName, $contents);
+        $zip->close();
+
+        $bytes = file_get_contents($tmp);
+        @unlink($tmp);
+
+        return $bytes;
+    }
 }
