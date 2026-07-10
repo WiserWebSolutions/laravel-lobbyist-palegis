@@ -411,6 +411,42 @@ class LaravelPalegis
     }
 
     /**
+     * Stream a session's raw Bill History records one at a time instead of
+     * materializing the full list, for callers (like {@see PalegisDriver::bills()})
+     * that transform every record anyway and don't need the whole raw list
+     * to exist in memory at once alongside the transformed output.
+     *
+     * On a warm cache this reads in chunks via {@see BillHistoryCache::each()}.
+     * If a chunk reveals a per-bill entry that expired independently of the
+     * index, this throws {@see Support\BillHistoryCacheMiss} — the caller
+     * should catch it, discard whatever it's built so far, and fall back to
+     * {@see syncBillHistory()} for a single consistent rebuild.
+     *
+     * @return iterable<int, array>
+     *
+     * @throws PalegisException
+     * @throws Support\BillHistoryCacheMiss
+     */
+    public function eachBillHistoryRecord(?string $session = null): iterable
+    {
+        $session ??= $this->currentSession();
+
+        if (! ($this->cache['enabled'] ?? false)) {
+            yield from $this->fetcher->fetch($session)['bills'] ?? [];
+
+            return;
+        }
+
+        if ($this->billHistoryCache->hasIndex($session)) {
+            yield from $this->billHistoryCache->each($session);
+
+            return;
+        }
+
+        yield from $this->syncBillHistory($session)['bills'] ?? [];
+    }
+
+    /**
      * @param  array<int, array>  $bills
      */
     private function scanBills(array $bills, string $identifier): ?array

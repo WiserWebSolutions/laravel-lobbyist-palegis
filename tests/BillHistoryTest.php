@@ -161,4 +161,19 @@ class BillHistoryTest extends TestCase
         $this->assertCount(2, $history['bills']);
         Http::assertSentCount(2);
     }
+
+    public function test_driver_bills_resyncs_when_a_bill_is_evicted_mid_stream(): void
+    {
+        $this->enableCache();
+        $this->fakeBillHistory();
+        $driver = $this->driver()->setStateContext('PA');
+
+        $driver->bills();
+        Cache::store('array')->forget('palegis:bill-history:2025_0:bill:20250SB0100');
+
+        $bills = $driver->bills();
+
+        $this->assertCount(2, $bills);
+        Http::assertSentCount(2);
+    }
 }

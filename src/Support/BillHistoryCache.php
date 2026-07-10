@@ -16,6 +16,7 @@ class BillHistoryCache
     public function __construct(
         protected readonly Repository $store,
         protected readonly ?int $ttl = null,
+        protected readonly int $chunkSize = 250,
     ) {}
 
     public function hasIndex(string $session): bool
@@ -29,6 +30,11 @@ class BillHistoryCache
      * missing, or if any per-bill entry it references has expired/evicted
      * independently — callers should treat that as a cache miss and resync
      * rather than serve a partial bill list.
+     *
+     * For a large session, prefer {@see each()} when every bill needs to be
+     * transformed anyway (e.g. into DTOs) — it streams in chunks instead of
+     * requiring the full raw bill list and its transformed output to be
+     * resident in memory at the same time.
      */
     public function all(string $session): ?array
     {
@@ -38,25 +44,66 @@ class BillHistoryCache
             return null;
         }
 
-        if ($index['bill_ids'] === []) {
-            return $this->assembled($session, $index, []);
-        }
-
-        $keys = array_map(fn (string $id) => $this->billKey($session, $id), $index['bill_ids']);
-        $values = $this->store->many($keys);
-
-        $bills = [];
-        foreach ($index['bill_ids'] as $i => $id) {
-            $record = $values[$keys[$i]] ?? null;
-
-            if (! is_array($record)) {
-                return null;
-            }
-
-            $bills[] = $record;
+        try {
+            $bills = iterator_to_array($this->readChunked($session, $index['bill_ids']), false);
+        } catch (BillHistoryCacheMiss) {
+            return null;
         }
 
         return $this->assembled($session, $index, $bills);
+    }
+
+    /**
+     * Yield each of a session's cached bill records one at a time, reading
+     * from the store in chunks of {@see $chunkSize} keys rather than all at
+     * once, so a caller transforming every record (e.g. into DTOs) never
+     * has to hold the full raw bill list and the full transformed output in
+     * memory simultaneously.
+     *
+     * Throws {@see BillHistoryCacheMiss} if a per-bill entry has expired
+     * independently of the index partway through — callers should catch
+     * this, discard whatever they've built so far, and resync rather than
+     * use a partial result.
+     *
+     * @return \Generator<int, array>
+     *
+     * @throws BillHistoryCacheMiss
+     */
+    public function each(string $session): \Generator
+    {
+        $index = $this->store->get($this->indexKey($session));
+
+        if (! is_array($index) || ! isset($index['bill_ids'])) {
+            return;
+        }
+
+        yield from $this->readChunked($session, $index['bill_ids']);
+    }
+
+    /**
+     * @param  array<int, string>  $billIds
+     * @return \Generator<int, array>
+     *
+     * @throws BillHistoryCacheMiss
+     */
+    protected function readChunked(string $session, array $billIds): \Generator
+    {
+        foreach (array_chunk($billIds, $this->chunkSize) as $idBatch) {
+            $keys = array_map(fn (string $id) => $this->billKey($session, $id), $idBatch);
+            $values = $this->store->many($keys);
+
+            foreach ($idBatch as $i => $id) {
+                $record = $values[$keys[$i]] ?? null;
+
+                if (! is_array($record)) {
+                    throw new BillHistoryCacheMiss($session, $id);
+                }
+
+                yield $record;
+            }
+
+            unset($values);
+        }
     }
 
     /**

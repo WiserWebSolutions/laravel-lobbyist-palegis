@@ -4,13 +4,14 @@ namespace WiserWebSolutions\LaravelPalegis\Tests\Support;
 
 use Illuminate\Support\Facades\Cache;
 use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCache;
+use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCacheMiss;
 use WiserWebSolutions\LaravelPalegis\Tests\TestCase;
 
 class BillHistoryCacheTest extends TestCase
 {
-    private function cache(): BillHistoryCache
+    private function cache(int $chunkSize = 250): BillHistoryCache
     {
-        return new BillHistoryCache(Cache::store('array'), 3600);
+        return new BillHistoryCache(Cache::store('array'), 3600, $chunkSize);
     }
 
     /** @return array{export_date: string, total: int, session: string, bills: array<int, array>} */
@@ -84,5 +85,34 @@ class BillHistoryCacheTest extends TestCase
 
         $this->assertTrue($cache->hasIndex('2025_0'));
         $this->assertNull($cache->all('2025_0'));
+    }
+
+    public function test_each_yields_every_bill_across_multiple_chunks(): void
+    {
+        // chunkSize=1 forces two separate many() reads for the two cached
+        // bills, proving chunk boundaries don't drop or duplicate records.
+        $cache = $this->cache(chunkSize: 1);
+        $cache->put('2025_0', $this->parsed());
+
+        $ids = [];
+        foreach ($cache->each('2025_0') as $record) {
+            $ids[] = $record['id'];
+        }
+
+        $this->assertSame(['20250HB0017', '20250SB0100'], $ids);
+    }
+
+    public function test_each_throws_bill_history_cache_miss_when_a_bill_is_evicted_mid_stream(): void
+    {
+        $cache = $this->cache(chunkSize: 1);
+        $cache->put('2025_0', $this->parsed());
+
+        Cache::store('array')->forget('palegis:bill-history:2025_0:bill:20250SB0100');
+
+        $this->expectException(BillHistoryCacheMiss::class);
+
+        foreach ($cache->each('2025_0') as $record) {
+            // Consume until the miss surfaces.
+        }
     }
 }

@@ -3,6 +3,7 @@
 namespace WiserWebSolutions\LaravelPalegis;
 
 use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
+use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCacheMiss;
 use WiserWebSolutions\LaravelPalegis\Support\PalegisMapper;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillProvider;
@@ -51,10 +52,20 @@ class PalegisDriver extends AbstractDriver implements BillLookup, BillProvider, 
 
     public function bills(): BillCollection
     {
-        $bills = array_map(
-            fn (array $record) => PalegisMapper::billFromHistory($record),
-            $this->client->getBillHistory()['bills'] ?? []
-        );
+        try {
+            $bills = [];
+
+            foreach ($this->client->eachBillHistoryRecord() as $record) {
+                $bills[] = PalegisMapper::billFromHistory($record);
+            }
+        } catch (BillHistoryCacheMiss) {
+            // A per-bill cache entry expired mid-stream; discard whatever
+            // was built above and do one consistent resync + rebuild.
+            $bills = array_map(
+                fn (array $record) => PalegisMapper::billFromHistory($record),
+                $this->client->syncBillHistory()['bills'] ?? []
+            );
+        }
 
         return new BillCollection($bills);
     }
