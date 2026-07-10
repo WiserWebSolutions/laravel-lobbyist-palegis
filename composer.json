@@ -50,6 +50,22 @@
         "test": "vendor/bin/phpunit",
         "format": "vendor/bin/pint"
     },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../laravel-lobbyist",
+            "options": {
+                "symlink": true
+            }
+        },
+        {
+            "type": "path",
+            "url": "../laravel-lobbyist-legiscan",
+            "options": {
+                "symlink": true
+            }
+        }
+    ],
     "config": {
         "sort-packages": true
     },

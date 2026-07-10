@@ -3,6 +3,8 @@
 namespace WiserWebSolutions\LaravelPalegis\Support;
 
 use WiserWebSolutions\Lobbyist\Data\Bill;
+use WiserWebSolutions\Lobbyist\Data\BillText;
+use WiserWebSolutions\Lobbyist\Data\BillTextCollection;
 use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\Session;
 use WiserWebSolutions\Lobbyist\Data\Vote;
@@ -64,6 +66,48 @@ class PalegisMapper
         }
 
         return new Bill(meta: $meta);
+    }
+
+    /**
+     * Map a Bill History record's printer-number history to a version-by-version
+     * {@see BillTextCollection}. Each printer's number is one text revision;
+     * only a link to its PDF is available (no fetched bytes), and its date is
+     * recovered from the action that first reported that printer's number, if
+     * any.
+     */
+    public static function billTextHistory(array $record): BillTextCollection
+    {
+        $billId = $record['id'] ?? '';
+
+        return new BillTextCollection(
+            array_map(
+                fn (array $printer) => new BillText(meta: [
+                    'id' => $printer['number'] ?? '',
+                    'bill_id' => $billId,
+                    'type' => "Printer's Number {$printer['number']}",
+                    'mime' => 'application/pdf',
+                    'date' => self::printersNumberDate($record, $printer),
+                    'url' => $printer['pdf_url'] ?? '',
+                    'raw' => $printer,
+                ]),
+                $record['printers_numbers'] ?? []
+            )
+        );
+    }
+
+    /**
+     * The date of the action that first reported a given printer's number,
+     * cross-referenced via each action's `printers_number` field.
+     */
+    private static function printersNumberDate(array $record, array $printer): ?string
+    {
+        foreach ($record['actions'] ?? [] as $action) {
+            if (($action['printers_number'] ?? null) === ($printer['number'] ?? null)) {
+                return $action['date'] ?? null;
+            }
+        }
+
+        return null;
     }
 
     public static function vote(array $item, Chamber $chamber): Vote

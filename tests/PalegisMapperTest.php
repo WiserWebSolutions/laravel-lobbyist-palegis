@@ -3,6 +3,7 @@
 namespace WiserWebSolutions\LaravelPalegis\Tests;
 
 use WiserWebSolutions\LaravelPalegis\Support\PalegisMapper;
+use WiserWebSolutions\Lobbyist\Data\BillText;
 use WiserWebSolutions\Lobbyist\Enums\Chamber;
 use WiserWebSolutions\Lobbyist\Enums\StateEnum;
 
@@ -80,5 +81,37 @@ class PalegisMapperTest extends TestCase
         $this->assertSame('Reported as committed', $bill->lastAction);
         $this->assertStringContainsString('HB0017/PN0002', $bill->url);
         $this->assertArrayNotHasKey('raw', $bill->meta);
+    }
+
+    public function test_bill_text_history_maps_each_printers_number_with_no_content(): void
+    {
+        $record = $this->billRecord();
+        $record['printers_numbers'] = [
+            ['sequence' => '01', 'number' => '0002', 'pdf_url' => 'https://example.test/HB0017/PN0002'],
+            ['sequence' => '02', 'number' => '0101', 'pdf_url' => 'https://example.test/HB0017/PN0101'],
+        ];
+        $record['actions'] = [
+            ['full_action' => 'Referred to EDUCATION', 'date' => '01/08/25', 'printers_number' => '0002'],
+            ['full_action' => 'Amended on third reading', 'date' => '03/12/25', 'printers_number' => '0101'],
+        ];
+
+        $history = PalegisMapper::billTextHistory($record);
+
+        $this->assertCount(2, $history);
+        $this->assertContainsOnlyInstancesOf(BillText::class, $history);
+        $this->assertSame('https://example.test/HB0017/PN0101', $history->last()->url);
+        $this->assertSame('01/08/25', $history->first()->date?->format('m/d/y'));
+        $this->assertNull($history->first()->content);
+        $this->assertSame('20250HB0017', $history->first()->billId);
+    }
+
+    public function test_bill_text_history_leaves_date_null_when_no_action_references_the_printers_number(): void
+    {
+        $record = $this->billRecord();
+
+        $history = PalegisMapper::billTextHistory($record);
+
+        $this->assertCount(1, $history);
+        $this->assertNull($history->first()->date);
     }
 }

@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Http;
 use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
 use WiserWebSolutions\LaravelPalegis\LaravelPalegis;
 use WiserWebSolutions\LaravelPalegis\PalegisDriver;
+use WiserWebSolutions\Lobbyist\Data\BillText;
 use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\Vote;
 use WiserWebSolutions\Lobbyist\Enums\Chamber;
@@ -67,6 +68,39 @@ class PalegisDriverTest extends TestCase
 
         $this->assertCount(1, $sessions);
         $this->assertSame(StateEnum::PA, $sessions->first()->state);
+    }
+
+    public function test_bill_text_history_maps_printers_numbers_from_the_bill_history_record(): void
+    {
+        $this->fakeBillHistory();
+
+        $history = $this->driver()->setStateContext('PA')->billTextHistory('HB17');
+
+        $this->assertCount(1, $history);
+        $this->assertContainsOnlyInstancesOf(BillText::class, $history);
+        $this->assertStringContainsString('HB0017/PN0002', $history->first()->url);
+        $this->assertSame('01/08/25', $history->first()->date?->format('m/d/y'));
+        $this->assertNull($history->first()->content);
+    }
+
+    public function test_bill_text_returns_the_latest_version(): void
+    {
+        $this->fakeBillHistory();
+
+        $text = $this->driver()->setStateContext('PA')->billText('HB17');
+
+        $this->assertInstanceOf(BillText::class, $text);
+        $this->assertStringContainsString('HB0017/PN0002', $text->url);
+    }
+
+    public function test_bill_text_throws_when_the_bill_has_no_printers_numbers(): void
+    {
+        $this->fakeBillHistory();
+
+        $this->expectException(PalegisException::class);
+        $this->expectExceptionMessageMatches('/no text versions/');
+
+        $this->driver()->setStateContext('PA')->billText('SB100');
     }
 
     public function test_unsupported_lookups_throw(): void

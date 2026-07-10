@@ -7,11 +7,15 @@ use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCacheMiss;
 use WiserWebSolutions\LaravelPalegis\Support\PalegisMapper;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillProvider;
+use WiserWebSolutions\Lobbyist\Contracts\Providers\BillTextHistoryLookup;
+use WiserWebSolutions\Lobbyist\Contracts\Providers\BillTextLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\RepresentativeProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\SessionProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\VoteProvider;
 use WiserWebSolutions\Lobbyist\Data\Bill;
 use WiserWebSolutions\Lobbyist\Data\BillCollection;
+use WiserWebSolutions\Lobbyist\Data\BillText;
+use WiserWebSolutions\Lobbyist\Data\BillTextCollection;
 use WiserWebSolutions\Lobbyist\Data\LegislatorCollection;
 use WiserWebSolutions\Lobbyist\Data\SessionCollection;
 use WiserWebSolutions\Lobbyist\Data\VoteCollection;
@@ -32,8 +36,21 @@ use WiserWebSolutions\Lobbyist\Support\AbstractDriver;
  * via {@see AbstractDriver}. Feeds without a core-DTO mapping (calendars,
  * journals, amendments, memos, …) are available on the underlying
  * {@see LaravelPalegis} client.
+ *
+ * Bill text history is each bill's printer-number history from the Bill
+ * History export — every printer's number is one revision of the bill's text.
+ * Only a link to the PDF is available (no fetched bytes), so every
+ * {@see BillText::$content} from this driver is null; consumers fetch `url`
+ * themselves.
  */
-class PalegisDriver extends AbstractDriver implements BillLookup, BillProvider, RepresentativeProvider, SessionProvider, VoteProvider
+class PalegisDriver extends AbstractDriver implements
+    BillLookup,
+    BillProvider,
+    RepresentativeProvider,
+    SessionProvider,
+    VoteProvider,
+    BillTextLookup,
+    BillTextHistoryLookup
 {
     /** @var array<string, Chamber> */
     private const CHAMBERS = [
@@ -72,13 +89,23 @@ class PalegisDriver extends AbstractDriver implements BillLookup, BillProvider, 
 
     public function bill(string|int $identifier): Bill
     {
-        $record = $this->client->findBill(null, (string) $identifier);
+        return PalegisMapper::billFromHistory($this->findBillRecord($identifier));
+    }
 
-        if ($record === null) {
-            throw new PalegisException("Bill [{$identifier}] was not found in the PA bill history.");
+    public function billTextHistory(string|int $identifier): BillTextCollection
+    {
+        return PalegisMapper::billTextHistory($this->findBillRecord($identifier));
+    }
+
+    public function billText(string|int $identifier): BillText
+    {
+        $latest = $this->billTextHistory($identifier)->latest();
+
+        if ($latest === null) {
+            throw new PalegisException("Bill [{$identifier}] has no text versions in the PA bill history.");
         }
 
-        return PalegisMapper::billFromHistory($record);
+        return $latest;
     }
 
     public function votes(): VoteCollection
@@ -101,6 +128,17 @@ class PalegisDriver extends AbstractDriver implements BillLookup, BillProvider, 
         }
 
         return new LegislatorCollection($legislators);
+    }
+
+    private function findBillRecord(string|int $identifier): array
+    {
+        $record = $this->client->findBill(null, (string) $identifier);
+
+        if ($record === null) {
+            throw new PalegisException("Bill [{$identifier}] was not found in the PA bill history.");
+        }
+
+        return $record;
     }
 
     /**
