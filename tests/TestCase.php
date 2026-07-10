@@ -2,12 +2,22 @@
 
 namespace WiserWebSolutions\LaravelPalegis\Tests;
 
+use Illuminate\Support\Facades\Http;
 use Orchestra\Testbench\TestCase as Orchestra;
 use WiserWebSolutions\LaravelPalegis\LaravelPalegisServiceProvider;
 use WiserWebSolutions\Lobbyist\LobbyistServiceProvider;
 
 abstract class TestCase extends Orchestra
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Guard: any HTTP request that isn't explicitly faked should fail the
+        // test rather than hit the live palegis.us site.
+        Http::preventStrayRequests();
+    }
+
     protected function getPackageProviders($app): array
     {
         return [
@@ -19,6 +29,11 @@ abstract class TestCase extends Orchestra
     protected function defineEnvironment($app): void
     {
         $app['config']->set('palegis.cache.enabled', false);
+        $app['config']->set('palegis.request', [
+            'timeout' => 5,
+            'retry_times' => 1,
+            'retry_sleep_ms' => 0,
+        ]);
     }
 
     /**

@@ -2,29 +2,37 @@
 
 namespace WiserWebSolutions\LaravelPalegis;
 
+use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
 use WiserWebSolutions\LaravelPalegis\Support\PalegisMapper;
+use WiserWebSolutions\Lobbyist\Contracts\Providers\BillLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\RepresentativeProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\SessionProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\VoteProvider;
+use WiserWebSolutions\Lobbyist\Data\Bill;
 use WiserWebSolutions\Lobbyist\Data\BillCollection;
 use WiserWebSolutions\Lobbyist\Data\LegislatorCollection;
 use WiserWebSolutions\Lobbyist\Data\SessionCollection;
 use WiserWebSolutions\Lobbyist\Data\VoteCollection;
 use WiserWebSolutions\Lobbyist\Enums\Chamber;
+use WiserWebSolutions\Lobbyist\Exceptions\UnsupportedOperationException;
 use WiserWebSolutions\Lobbyist\Support\AbstractDriver;
 
 /**
- * Pennsylvania driver backed by the palegis.us RSS feeds.
+ * Pennsylvania driver backed by palegis.us.
  *
- * The feeds are browse-only: they publish current bills, votes and members but
- * offer no way to look up an arbitrary identifier, so this driver implements
- * the list/browse provider interfaces but none of the *Lookup interfaces.
- * Calling getBill()/getVote()/getRepresentative() throws
+ * Roll-call votes and members come from the (browse-only) RSS feeds, while
+ * bills come from the Bill History Data export — a bulk download of every bill
+ * and resolution in the session, which also backs bill lookups by number/id.
+ * Votes and members cannot be resolved by arbitrary identifier, so this driver
+ * implements VoteProvider/RepresentativeProvider but not their *Lookup
+ * interfaces; calling vote()/representative() throws
  * {@see UnsupportedOperationException}
- * via {@see AbstractDriver}.
+ * via {@see AbstractDriver}. Feeds without a core-DTO mapping (calendars,
+ * journals, amendments, memos, …) are available on the underlying
+ * {@see LaravelPalegis} client.
  */
-class PalegisDriver extends AbstractDriver implements BillProvider, RepresentativeProvider, SessionProvider, VoteProvider
+class PalegisDriver extends AbstractDriver implements BillLookup, BillProvider, RepresentativeProvider, SessionProvider, VoteProvider
 {
     /** @var array<string, Chamber> */
     private const CHAMBERS = [
@@ -34,25 +42,35 @@ class PalegisDriver extends AbstractDriver implements BillProvider, Representati
 
     public function __construct(private readonly LaravelPalegis $client) {}
 
-    public function listSessions(): SessionCollection
+    public function sessions(): SessionCollection
     {
         return new SessionCollection([
             PalegisMapper::currentSession(),
         ]);
     }
 
-    public function listBills(): BillCollection
+    public function bills(): BillCollection
     {
-        $bills = [];
-
-        foreach ($this->itemsFor('bills') as [$item, $chamber]) {
-            $bills[] = PalegisMapper::bill($item, $chamber);
-        }
+        $bills = array_map(
+            fn (array $record) => PalegisMapper::billFromHistory($record),
+            $this->client->getBillHistory()['bills'] ?? []
+        );
 
         return new BillCollection($bills);
     }
 
-    public function listVotes(): VoteCollection
+    public function bill(string|int $identifier): Bill
+    {
+        foreach ($this->client->getBillHistory()['bills'] ?? [] as $record) {
+            if ($this->billMatches($record, (string) $identifier)) {
+                return PalegisMapper::billFromHistory($record);
+            }
+        }
+
+        throw new PalegisException("Bill [{$identifier}] was not found in the PA bill history.");
+    }
+
+    public function votes(): VoteCollection
     {
         $votes = [];
 
@@ -63,7 +81,7 @@ class PalegisDriver extends AbstractDriver implements BillProvider, Representati
         return new VoteCollection($votes);
     }
 
-    public function listRepresentatives(): LegislatorCollection
+    public function representatives(): LegislatorCollection
     {
         $legislators = [];
 
@@ -72,6 +90,25 @@ class PalegisDriver extends AbstractDriver implements BillProvider, Representati
         }
 
         return new LegislatorCollection($legislators);
+    }
+
+    /**
+     * Whether a Bill History record matches a caller-supplied identifier,
+     * accepting the full id ("20250HB0017") or the designator ("HB17"/"HB0017",
+     * case-insensitive, leading zeros optional).
+     */
+    private function billMatches(array $record, string $identifier): bool
+    {
+        $normalize = fn (string $value) => preg_replace(
+            '/^([A-Z]+)0*(\d+)$/',
+            '$1$2',
+            strtoupper(preg_replace('/\s+/', '', $value))
+        );
+
+        $needle = $normalize($identifier);
+
+        return strtoupper((string) ($record['id'] ?? '')) === strtoupper($identifier)
+            || $normalize((string) ($record['designator'] ?? '')) === $needle;
     }
 
     /**

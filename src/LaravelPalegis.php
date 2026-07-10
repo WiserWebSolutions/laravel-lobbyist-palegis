@@ -2,6 +2,7 @@
 
 namespace WiserWebSolutions\LaravelPalegis;
 
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
@@ -11,6 +12,11 @@ use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
 
 class LaravelPalegis
 {
+    /**
+     * Base URL for the palegis.us bulk-data download endpoint.
+     */
+    private const BILL_HISTORY_BASE_URL = 'https://www.palegis.us/data/file';
+
     /**
      * RSS endpoints configuration.
      */
@@ -27,6 +33,11 @@ class LaravelPalegis
     protected array $cache;
 
     /**
+     * Bulk data-download configuration settings.
+     */
+    protected array $data;
+
+    /**
      * Constructor to initialize the Palegis client with configuration settings.
      *
      * @throws PalegisException When required configuration is missing
@@ -36,6 +47,7 @@ class LaravelPalegis
         $this->endpoints = Config::get('palegis.endpoints', []);
         $this->request = Config::get('palegis.request', []);
         $this->cache = Config::get('palegis.cache', []);
+        $this->data = Config::get('palegis.data', []);
 
         if (empty($this->endpoints)) {
             throw new PalegisException('RSS endpoints configuration is missing');
@@ -59,19 +71,24 @@ class LaravelPalegis
         }
 
         $url = $this->endpoints[$chamber][$feedType];
-        $cacheKey = 'palegis:rss:'.md5($url);
 
-        if ($this->cache['enabled'] ?? false) {
-            // A null store name resolves to the application's default cache store.
-            $cacheStore = $this->cache['store'] ?? null;
+        return $this->remember('rss:'.$url, fn () => $this->fetchAndParseRss($url), $ttl);
+    }
 
-            return Cache::store($cacheStore)
-                ->remember($cacheKey, $ttl ?? ($this->cache['ttl'] ?? 3600), function () use ($url) {
-                    return $this->fetchAndParseRss($url);
-                });
+    /**
+     * Run a producer through the configured cache, or directly if caching is off.
+     *
+     * @param  string  $key  A stable identifier for the cached value
+     */
+    protected function remember(string $key, callable $producer, ?int $ttl = null): mixed
+    {
+        if (! ($this->cache['enabled'] ?? false)) {
+            return $producer();
         }
 
-        return $this->fetchAndParseRss($url);
+        // A null store name resolves to the application's default cache store.
+        return Cache::store($this->cache['store'] ?? null)
+            ->remember('palegis:'.md5($key), $ttl ?? ($this->cache['ttl'] ?? 3600), $producer);
     }
 
     /**
@@ -80,33 +97,61 @@ class LaravelPalegis
      * @param  string  $url  The RSS feed URL
      * @return array The parsed RSS data
      *
-     * @throws PalegisException When response is invalid
-     * @throws RequestException When HTTP request fails
+     * @throws PalegisException When the request fails or the response is invalid
      */
     protected function fetchAndParseRss(string $url): array
     {
-        Log::debug('RSS Request (from API): '.$url);
-
-        $response = Http::timeout($this->request['timeout'] ?? 30)
-            ->retry($this->request['retry_times'] ?? 2, $this->request['retry_sleep_ms'] ?? 200)
-            ->get($url);
-
-        $response->throw();
+        $body = $this->fetchBody($url);
 
         $previous = libxml_use_internal_errors(true);
 
         try {
-            $xml = simplexml_load_string($response->body());
+            $xml = simplexml_load_string($body);
         } finally {
             libxml_clear_errors();
             libxml_use_internal_errors($previous);
         }
 
         if ($xml === false || ! isset($xml->channel)) {
-            throw new PalegisException('Invalid XML response from RSS feed');
+            throw new PalegisException("Invalid RSS response from [{$url}].");
         }
 
         return $this->parseRssXml($xml);
+    }
+
+    /**
+     * Perform a GET request and return the raw body, throwing an informative
+     * PalegisException (including the attempted URL) on any failure.
+     *
+     * @param  string|null  $notFoundHint  Extra guidance to include on a 404
+     *
+     * @throws PalegisException
+     */
+    protected function fetchBody(string $url, ?string $notFoundHint = null): string
+    {
+        Log::debug('palegis request: '.$url);
+
+        try {
+            $response = Http::timeout($this->request['timeout'] ?? 30)
+                ->retry($this->request['retry_times'] ?? 2, $this->request['retry_sleep_ms'] ?? 200)
+                ->get($url);
+        } catch (RequestException $e) {
+            $status = $e->response?->status();
+            throw PalegisException::requestFailed($url, $status, $this->hintFor($status, $notFoundHint), $e);
+        } catch (ConnectionException $e) {
+            throw PalegisException::requestFailed($url, null, 'Could not connect to palegis.us: '.$e->getMessage(), $e);
+        }
+
+        if ($response->failed()) {
+            throw PalegisException::requestFailed($url, $response->status(), $this->hintFor($response->status(), $notFoundHint));
+        }
+
+        return $response->body();
+    }
+
+    private function hintFor(?int $status, ?string $notFoundHint): ?string
+    {
+        return ($status === 404 && $notFoundHint !== null) ? $notFoundHint : null;
     }
 
     /**
@@ -158,169 +203,132 @@ class LaravelPalegis
         return $result;
     }
 
-    /**
-     * Get House calendar RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed calendar data
-     */
+    // -----------------------------------------------------------------
+    // House feeds
+    // -----------------------------------------------------------------
+
+    /** Get the House Calendar RSS feed. */
     public function getHouseCalendar(?int $ttl = null): array
     {
         return $this->fetchRssFeed('house', 'calendar', $ttl);
     }
 
-    /**
-     * Get House journals RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed journals data
-     */
+    /** Get the House Tabled Bill Calendar RSS feed. */
+    public function getHouseTabledBillCalendar(?int $ttl = null): array
+    {
+        return $this->fetchRssFeed('house', 'calendar-tabled-bill', $ttl);
+    }
+
+    /** Get the House Journals RSS feed. */
     public function getHouseJournals(?int $ttl = null): array
     {
         return $this->fetchRssFeed('house', 'journals', $ttl);
     }
 
-    /**
-     * Get House reports RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed reports data
-     */
+    /** Get the House Daily Session Reports RSS feed. */
     public function getHouseReports(?int $ttl = null): array
     {
         return $this->fetchRssFeed('house', 'reports', $ttl);
     }
 
-    /**
-     * Get House votes RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed votes data
-     */
+    /** Get the House Roll Call Votes RSS feed. */
     public function getHouseVotes(?int $ttl = null): array
     {
         return $this->fetchRssFeed('house', 'votes', $ttl);
     }
 
-    /**
-     * Get House bills RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed bills data
-     */
-    public function getHouseBills(?int $ttl = null): array
-    {
-        return $this->fetchRssFeed('house', 'bills', $ttl);
-    }
-
-    /**
-     * Get House members RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed members data
-     */
-    public function getHouseMembers(?int $ttl = null): array
-    {
-        return $this->fetchRssFeed('house', 'members', $ttl);
-    }
-
-    /**
-     * Get House committee schedule RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed committee schedule data
-     */
-    public function getHouseCommitteeSchedule(?int $ttl = null): array
-    {
-        return $this->fetchRssFeed('house', 'committee-schedule', $ttl);
-    }
-
-    /**
-     * Get House roll calls RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed roll calls data
-     */
-    public function getHouseRollCalls(?int $ttl = null): array
-    {
-        return $this->fetchRssFeed('house', 'roll-calls', $ttl);
-    }
-
-    /**
-     * Get House amendments RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed amendments data
-     */
+    /** Get the House Voted Amendments RSS feed. */
     public function getHouseAmendments(?int $ttl = null): array
     {
         return $this->fetchRssFeed('house', 'amendments', $ttl);
     }
 
-    /**
-     * Get House cosponsorship RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed cosponsorship data
-     */
-    public function getHouseCosponsorship(?int $ttl = null): array
+    /** Get the House Members RSS feed. */
+    public function getHouseMembers(?int $ttl = null): array
     {
-        return $this->fetchRssFeed('house', 'cosponsorship', $ttl);
+        return $this->fetchRssFeed('house', 'members', $ttl);
     }
 
-    /**
-     * Get House committee assignments RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed committee assignments data
-     */
+    /** Get the House Committee Meeting Schedule RSS feed. */
+    public function getHouseCommitteeSchedule(?int $ttl = null): array
+    {
+        return $this->fetchRssFeed('house', 'committee-schedule', $ttl);
+    }
+
+    /** Get the House Committee Assignments RSS feed. */
     public function getHouseCommitteeAssignments(?int $ttl = null): array
     {
         return $this->fetchRssFeed('house', 'committee-assignments', $ttl);
     }
 
-    /**
-     * Get Senate calendar RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed calendar data
-     */
+    /** Get the House Co-Sponsorship Memoranda RSS feed. */
+    public function getHouseCosponsorshipMemos(?int $ttl = null): array
+    {
+        return $this->fetchRssFeed('house', 'memos', $ttl);
+    }
+
+    // -----------------------------------------------------------------
+    // Senate feeds
+    // -----------------------------------------------------------------
+
+    /** Get the Senate Calendar RSS feed. */
     public function getSenateCalendar(?int $ttl = null): array
     {
         return $this->fetchRssFeed('senate', 'calendar', $ttl);
     }
 
-    /**
-     * Get Senate journals RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed journals data
-     */
+    /** Get the Senate Journals RSS feed. */
     public function getSenateJournals(?int $ttl = null): array
     {
         return $this->fetchRssFeed('senate', 'journals', $ttl);
     }
 
-    /**
-     * Get Senate notes RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed notes data
-     */
+    /** Get the Senate Session Notes RSS feed. */
     public function getSenateNotes(?int $ttl = null): array
     {
         return $this->fetchRssFeed('senate', 'notes', $ttl);
     }
 
-    /**
-     * Get Senate votes RSS feed.
-     *
-     * @param  int|null  $ttl  Optional cache time-to-live in seconds
-     * @return array The parsed votes data
-     */
+    /** Get the Senate Roll Call Votes RSS feed. */
     public function getSenateVotes(?int $ttl = null): array
     {
         return $this->fetchRssFeed('senate', 'votes', $ttl);
+    }
+
+    /** Get the Senate Floor Amendments RSS feed. */
+    public function getSenateAmendments(?int $ttl = null): array
+    {
+        return $this->fetchRssFeed('senate', 'amendments', $ttl);
+    }
+
+    /** Get the Senate Members RSS feed. */
+    public function getSenateMembers(?int $ttl = null): array
+    {
+        return $this->fetchRssFeed('senate', 'members', $ttl);
+    }
+
+    /** Get the Senate Executive Nominations Calendar RSS feed. */
+    public function getSenateExecutiveNominations(?int $ttl = null): array
+    {
+        return $this->fetchRssFeed('senate', 'executive-nominations', $ttl);
+    }
+
+    /** Get the Senate Committee Meeting Schedule RSS feed. */
+    public function getSenateCommitteeSchedule(?int $ttl = null): array
+    {
+        return $this->fetchRssFeed('senate', 'committee-schedule', $ttl);
+    }
+
+    /** Get the Senate Committee Assignments RSS feed. */
+    public function getSenateCommitteeAssignments(?int $ttl = null): array
+    {
+        return $this->fetchRssFeed('senate', 'committee-assignments', $ttl);
+    }
+
+    /** Get the Senate Co-Sponsorship Memoranda RSS feed. */
+    public function getSenateCosponsorshipMemos(?int $ttl = null): array
+    {
+        return $this->fetchRssFeed('senate', 'memos', $ttl);
     }
 
     /**
@@ -342,5 +350,235 @@ class LaravelPalegis
     public function getAllEndpoints(): array
     {
         return $this->endpoints;
+    }
+
+    // -----------------------------------------------------------------
+    // Bulk data downloads
+    // -----------------------------------------------------------------
+
+    /**
+     * Fetch and parse the Bill History Data export for a session.
+     *
+     * Every bill and resolution in the session with its sponsors, printer
+     * numbers, and full action history. The source is a ZIP-wrapped XML
+     * document; it is downloaded, extracted, parsed, and cached.
+     *
+     * NOTE: the export is large (thousands of bills / tens of MB uncompressed);
+     * parsing loads the whole document into memory.
+     *
+     * @param  string|null  $session  palegis session id (e.g. "2025_0"); null
+     *                                auto-detects the current regular session.
+     * @param  int|null  $ttl  Optional cache time-to-live in seconds
+     * @return array{export_date: string, total: int, session: string, bills: array<int, array>}
+     *
+     * @throws PalegisException When the archive or XML is invalid
+     */
+    public function getBillHistory(?string $session = null, ?int $ttl = null): array
+    {
+        $session ??= $this->currentSession();
+        $url = $this->billHistoryUrl($session);
+
+        return $this->remember(
+            'bill-history:'.$session,
+            fn () => $this->fetchAndParseBillHistory($url, $session),
+            $ttl ?? ($this->data['ttl'] ?? null),
+        );
+    }
+
+    /**
+     * The current regular-session palegis identifier, inferred from the year
+     * (Pennsylvania sessions run two years, starting in the odd year). For
+     * example, both 2025 and 2026 resolve to "2025_0".
+     */
+    public function currentSession(): string
+    {
+        $year = (int) date('Y');
+        $start = $year % 2 === 0 ? $year - 1 : $year;
+
+        return $start.'_0';
+    }
+
+    /**
+     * Build the Bill History Data download URL for a session.
+     */
+    protected function billHistoryUrl(string $session): string
+    {
+        return self::BILL_HISTORY_BASE_URL.'?'.http_build_query([
+            'documentType' => 'BillHistoryData',
+            'session' => $session,
+        ]);
+    }
+
+    /**
+     * Download the Bill History ZIP, extract its XML, and parse it.
+     *
+     * @throws PalegisException
+     */
+    protected function fetchAndParseBillHistory(string $url, string $session): array
+    {
+        $body = $this->fetchBody(
+            $url,
+            "The session [{$session}] may be invalid or not yet published. "
+            ."Session ids look like '2025_0' (regular) or '2025_1' (special session)."
+        );
+
+        $xmlString = $this->extractXmlFromZip($body);
+
+        $previous = libxml_use_internal_errors(true);
+
+        try {
+            $xml = simplexml_load_string($xmlString);
+        } finally {
+            libxml_clear_errors();
+            libxml_use_internal_errors($previous);
+        }
+
+        if ($xml === false) {
+            throw new PalegisException('Invalid XML in Bill History export');
+        }
+
+        return $this->parseBillHistoryXml($xml, $session);
+    }
+
+    /**
+     * Extract the first XML entry from a ZIP archive given as a binary string.
+     *
+     * @throws PalegisException
+     */
+    protected function extractXmlFromZip(string $zipBinary): string
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'palegis_bh_');
+
+        if ($tmp === false) {
+            throw new PalegisException('Unable to create a temp file for the Bill History archive');
+        }
+
+        try {
+            file_put_contents($tmp, $zipBinary);
+
+            $zip = new \ZipArchive;
+
+            if ($zip->open($tmp) !== true) {
+                throw new PalegisException('Unable to open the Bill History archive');
+            }
+
+            $contents = false;
+
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                if (str_ends_with(strtolower((string) $zip->getNameIndex($i)), '.xml')) {
+                    $contents = $zip->getFromIndex($i);
+                    break;
+                }
+            }
+
+            $zip->close();
+        } finally {
+            @unlink($tmp);
+        }
+
+        if (! is_string($contents) || $contents === '') {
+            throw new PalegisException('No XML entry found in the Bill History archive');
+        }
+
+        return $contents;
+    }
+
+    /**
+     * Parse a Bill History <historyExport> document into a structured array.
+     *
+     * @return array{export_date: string, total: int, session: string, bills: array<int, array>}
+     */
+    protected function parseBillHistoryXml(\SimpleXMLElement $xml, string $session): array
+    {
+        $bills = [];
+
+        foreach ($xml->session as $sessionNode) {
+            foreach ($sessionNode->bill as $bill) {
+                $bills[] = $this->parseBillHistoryBill($bill);
+            }
+        }
+
+        return [
+            'export_date' => (string) $xml['exportDate'],
+            'total' => (int) $xml['totalDocuments'],
+            'session' => $session,
+            'bills' => $bills,
+        ];
+    }
+
+    /**
+     * Parse a single <bill> node from the Bill History export.
+     */
+    protected function parseBillHistoryBill(\SimpleXMLElement $bill): array
+    {
+        $id = (string) $bill['id'];
+
+        $sponsors = [];
+        foreach ($bill->sponsors->sponsor as $sponsor) {
+            $sponsors[] = [
+                'name' => (string) $sponsor,
+                'party' => (string) $sponsor['party'],
+                'body' => (string) $sponsor['body'],
+                'district' => (string) $sponsor['districtNumber'],
+                'sequence' => (string) $sponsor['sequenceNumber'],
+            ];
+        }
+
+        $printersNumbers = [];
+        foreach ($bill->printersNumberHistory->number as $number) {
+            $printersNumbers[] = [
+                'sequence' => (string) $number['sequence'],
+                'number' => (string) $number,
+                'pdf_url' => (string) $number['billTextPdfUrl'],
+            ];
+        }
+
+        $actions = [];
+        foreach ($bill->actionHistory->action as $action) {
+            $actions[] = [
+                'sequence' => (string) $action['sequence'],
+                'chamber' => (string) $action['actionChamber'],
+                'verb' => (string) $action->verb,
+                'committee' => (string) $action->committee,
+                'date' => (string) $action->date,
+                'printers_number' => (string) $action->printersNumber,
+                'roll_call' => (string) $action->rollCallVote,
+                'full_action' => (string) $action->fullAction,
+            ];
+        }
+
+        return [
+            'id' => $id,
+            'last_update' => (string) $bill['lastUpdate'],
+            'session_year' => (string) $bill->sessionYear,
+            'session' => (string) $bill->session,
+            'body' => (string) $bill->body,
+            'type' => (string) $bill->type,
+            'type_description' => (string) $bill->type['description'],
+            'sub_type' => (string) $bill->subType,
+            'number' => (string) $bill->number,
+            'designator' => $this->billDesignatorFromId($id),
+            'short_title' => (string) $bill->shortTitle,
+            'cosponsorship_memo' => [
+                'text' => (string) $bill->cosponsorshipMemo,
+                'url' => (string) $bill->cosponsorshipMemo['memoUrl'],
+            ],
+            'sponsors' => $sponsors,
+            'printers_numbers' => $printersNumbers,
+            'actions' => $actions,
+        ];
+    }
+
+    /**
+     * Derive a human bill designator (e.g. "HB17") from a bill id
+     * like "20250HB0017".
+     */
+    protected function billDesignatorFromId(string $id): string
+    {
+        if (preg_match('/([A-Z]+)(\d+)$/', $id, $matches)) {
+            return $matches[1].ltrim($matches[2], '0');
+        }
+
+        return $id;
     }
 }

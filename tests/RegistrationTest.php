@@ -26,17 +26,17 @@ class RegistrationTest extends TestCase
 
         $this->assertDriverContract($driver);
 
-        // RSS is browse-only: list capabilities yes, lookups no.
+        // Bills come from the Bill History export (list + lookup); votes and
+        // members are browse-only RSS feeds with no lookup.
         $this->assertTrue($driver->supports(Capability::ListBills));
+        $this->assertTrue($driver->supports(Capability::GetBill));
         $this->assertTrue($driver->supports(Capability::ListVotes));
         $this->assertTrue($driver->supports(Capability::ListRepresentatives));
         $this->assertTrue($driver->supports(Capability::ListSessions));
-        $this->assertFalse($driver->supports(Capability::GetBill));
         $this->assertFalse($driver->supports(Capability::GetVote));
         $this->assertFalse($driver->supports(Capability::GetRepresentative));
 
-        $this->assertUnsupportedLookupThrows($driver, 'getBill');
-        $this->assertUnsupportedLookupThrows($driver, 'getVote');
-        $this->assertUnsupportedLookupThrows($driver, 'getRepresentative');
+        $this->assertUnsupportedLookupThrows($driver, 'vote');
+        $this->assertUnsupportedLookupThrows($driver, 'representative');
     }
 }

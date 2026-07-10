@@ -6,7 +6,6 @@ use Illuminate\Support\Facades\Http;
 use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
 use WiserWebSolutions\LaravelPalegis\LaravelPalegis;
 use WiserWebSolutions\LaravelPalegis\PalegisDriver;
-use WiserWebSolutions\Lobbyist\Data\Bill;
 use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\Vote;
 use WiserWebSolutions\Lobbyist\Enums\Chamber;
@@ -20,27 +19,6 @@ class PalegisDriverTest extends TestCase
         return new PalegisDriver(new LaravelPalegis);
     }
 
-    public function test_list_bills_maps_house_feed_to_dtos(): void
-    {
-        Http::fake([
-            'www.palegis.us/house/rss/session/bills' => Http::response(
-                $this->rssXml([
-                    ['title' => 'HB 100 - An Act', 'link' => 'https://www.palegis.us/bill/HB100', 'guid' => 'hb100'],
-                    ['title' => 'HB 200 - Another Act', 'link' => 'https://www.palegis.us/bill/HB200', 'guid' => 'hb200'],
-                ])
-            ),
-            // Senate has no "bills" feed, so it is skipped without a request.
-        ]);
-
-        $bills = $this->driver()->setStateContext('PA')->listBills();
-
-        $this->assertCount(2, $bills);
-        $this->assertContainsOnlyInstancesOf(Bill::class, $bills);
-        $this->assertSame('HB100', $bills->first()->number);
-        $this->assertSame(Chamber::House, $bills->first()->chamber);
-        $this->assertSame(StateEnum::PA, $bills->first()->state);
-    }
-
     public function test_list_votes_merges_both_chambers(): void
     {
         Http::fake([
@@ -52,7 +30,7 @@ class PalegisDriverTest extends TestCase
             ),
         ]);
 
-        $votes = $this->driver()->setStateContext('PA')->listVotes();
+        $votes = $this->driver()->setStateContext('PA')->votes();
 
         $this->assertCount(2, $votes);
         $this->assertContainsOnlyInstancesOf(Vote::class, $votes);
@@ -60,7 +38,7 @@ class PalegisDriverTest extends TestCase
         $this->assertSame(Chamber::Senate, $votes->byChamber(Chamber::Senate)->first()->chamber);
     }
 
-    public function test_list_representatives_maps_members_feed(): void
+    public function test_list_representatives_merges_both_chambers(): void
     {
         Http::fake([
             'www.palegis.us/house/rss/session/members' => Http::response(
@@ -68,19 +46,24 @@ class PalegisDriverTest extends TestCase
                     ['title' => 'Rep. Jane Doe', 'link' => 'https://www.palegis.us/member/1', 'guid' => 'm1'],
                 ])
             ),
+            'www.palegis.us/senate/rss/session/members' => Http::response(
+                $this->rssXml([
+                    ['title' => 'Sen. John Roe', 'link' => 'https://www.palegis.us/member/2', 'guid' => 'm2'],
+                ])
+            ),
         ]);
 
-        $reps = $this->driver()->setStateContext('PA')->listRepresentatives();
+        $reps = $this->driver()->setStateContext('PA')->representatives();
 
-        $this->assertCount(1, $reps);
+        $this->assertCount(2, $reps);
         $this->assertContainsOnlyInstancesOf(Legislator::class, $reps);
-        $this->assertSame('Rep. Jane Doe', $reps->first()->name);
-        $this->assertSame(Chamber::House, $reps->first()->chamber);
+        $this->assertSame('Rep. Jane Doe', $reps->byChamber(Chamber::House)->first()->name);
+        $this->assertSame('Sen. John Roe', $reps->byChamber(Chamber::Senate)->first()->name);
     }
 
     public function test_list_sessions_returns_synthetic_pa_session(): void
     {
-        $sessions = $this->driver()->setStateContext('PA')->listSessions();
+        $sessions = $this->driver()->setStateContext('PA')->sessions();
 
         $this->assertCount(1, $sessions);
         $this->assertSame(StateEnum::PA, $sessions->first()->state);
@@ -91,18 +74,33 @@ class PalegisDriverTest extends TestCase
         $driver = $this->driver();
 
         $this->expectException(UnsupportedOperationException::class);
-        $driver->getBill('HB100');
+        $driver->vote(1);
     }
 
     public function test_invalid_xml_throws_palegis_exception(): void
     {
         Http::fake([
-            'www.palegis.us/house/rss/session/bills' => Http::response('this is not xml'),
+            'www.palegis.us/*' => Http::response('this is not xml'),
         ]);
 
         $this->expectException(PalegisException::class);
-        $this->expectExceptionMessageMatches('/Invalid XML/');
+        $this->expectExceptionMessageMatches('/Invalid RSS response/');
 
-        $this->driver()->setStateContext('PA')->listBills();
+        $this->driver()->setStateContext('PA')->votes();
+    }
+
+    public function test_failed_feed_request_throws_with_attempted_url(): void
+    {
+        Http::fake([
+            'www.palegis.us/*' => Http::response('boom', 500),
+        ]);
+
+        try {
+            $this->driver()->setStateContext('PA')->votes();
+            $this->fail('Expected a PalegisException.');
+        } catch (PalegisException $e) {
+            $this->assertStringContainsString('www.palegis.us', $e->getMessage());
+            $this->assertStringContainsString('HTTP status 500', $e->getMessage());
+        }
     }
 }

@@ -10,30 +10,33 @@ use WiserWebSolutions\Lobbyist\Enums\Chamber;
 use WiserWebSolutions\Lobbyist\Enums\StateEnum;
 
 /**
- * Translates parsed palegis.us RSS items into normalized core DTOs.
+ * Translates parsed palegis.us feeds (RSS items and Bill History records) into
+ * normalized core DTOs.
  *
- * This is the only place that knows the shape of the PA RSS feeds, so core
- * stays unaware of any specific data source.
+ * This is the only place that knows the shape of the PA feeds, so core stays
+ * unaware of any specific data source.
  */
 class PalegisMapper
 {
-    public static function bill(array $item, Chamber $chamber): Bill
+    /**
+     * Map a Bill History Data record (see LaravelPalegis::getBillHistory()) to a Bill.
+     */
+    public static function billFromHistory(array $record): Bill
     {
-        $title = (string) ($item['title'] ?? '');
+        $lastAction = ! empty($record['actions']) ? end($record['actions']) : null;
+        $lastPrinters = ! empty($record['printers_numbers']) ? end($record['printers_numbers']) : null;
 
         return new Bill(meta: [
-            'id' => $item['guid'] ?? $item['link'] ?? $title,
-            'number' => self::extractBillNumber($title)
-                ?? self::extractBillNumber((string) ($item['link'] ?? ''))
-                ?? '',
-            'title' => $title,
-            'description' => $item['description'] ?? '',
+            'id' => $record['id'] ?? '',
+            'number' => $record['designator'] ?? '',
+            'title' => $record['short_title'] ?? '',
+            'description' => $record['short_title'] ?? '',
             'state' => StateEnum::PA,
-            'chamber' => $chamber,
-            'last_action' => $item['description'] ?? '',
-            'last_action_date' => $item['pub_date'] ?? null,
-            'url' => $item['link'] ?? '',
-            'raw' => $item,
+            'chamber' => Chamber::fromString($record['body'] ?? null),
+            'last_action' => $lastAction['full_action'] ?? '',
+            'last_action_date' => $lastAction['date'] ?? null,
+            'url' => $lastPrinters['pdf_url'] ?? '',
+            'raw' => $record,
         ]);
     }
 
@@ -73,17 +76,5 @@ class PalegisMapper
             'name' => 'Pennsylvania General Assembly',
             'title' => 'Pennsylvania General Assembly (current)',
         ]);
-    }
-
-    /**
-     * Pull a bill number like "HB1234" / "SR 12" out of arbitrary text.
-     */
-    private static function extractBillNumber(string $text): ?string
-    {
-        if (preg_match('/\b([HS][BR])\s?0*(\d+)\b/i', $text, $matches)) {
-            return strtoupper($matches[1]).$matches[2];
-        }
-
-        return null;
     }
 }

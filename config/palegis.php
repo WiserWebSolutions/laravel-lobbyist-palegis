@@ -6,7 +6,7 @@
 |--------------------------------------------------------------------------
 |
 | This driver reads the public RSS feeds published by the Pennsylvania General
-| Assembly at https://www.palegis.us and registers itself with the Lobbyist
+| Assembly at https://www.palegis.us/data and registers itself with the Lobbyist
 | manager under the "pa" state abbreviation.
 |
 */
@@ -19,28 +19,33 @@ return [
     |
     | The RSS feeds available per chamber. Only feed types listed here can be
     | fetched; the driver silently skips a chamber that does not publish a
-    | given feed type (e.g. the Senate does not publish a "bills" feed).
+    | given feed type (e.g. the Senate does not publish a "reports" feed).
     |
     */
     'endpoints' => [
         'house' => [
             'calendar' => 'https://www.palegis.us/house/rss/session/calendar',
+            'calendar-tabled-bill' => 'https://www.palegis.us/house/rss/session/calendar?calendarType=calendar-tabled-bill',
             'journals' => 'https://www.palegis.us/house/rss/session/journals',
             'reports' => 'https://www.palegis.us/house/rss/session/reports',
             'votes' => 'https://www.palegis.us/house/rss/session/votes',
-            'committee-schedule' => 'https://www.palegis.us/house/rss/session/committee-schedule',
-            'roll-calls' => 'https://www.palegis.us/house/rss/session/roll-calls',
             'amendments' => 'https://www.palegis.us/house/rss/session/amendments',
-            'cosponsorship' => 'https://www.palegis.us/house/rss/session/cosponsorship',
-            'bills' => 'https://www.palegis.us/house/rss/session/bills',
             'members' => 'https://www.palegis.us/house/rss/session/members',
-            'committee-assignments' => 'https://www.palegis.us/house/rss/session/committee-assignments',
+            'committee-schedule' => 'https://www.palegis.us/house/rss/committee/schedule',
+            'committee-assignments' => 'https://www.palegis.us/house/rss/committee/assignments',
+            'memos' => 'https://www.palegis.us/house/rss/legislation/memos',
         ],
         'senate' => [
             'calendar' => 'https://www.palegis.us/senate/rss/session/calendar',
             'journals' => 'https://www.palegis.us/senate/rss/session/journals',
             'notes' => 'https://www.palegis.us/senate/rss/session/notes',
             'votes' => 'https://www.palegis.us/senate/rss/session/votes',
+            'amendments' => 'https://www.palegis.us/senate/rss/session/amendments',
+            'members' => 'https://www.palegis.us/senate/rss/session/members',
+            'executive-nominations' => 'https://www.palegis.us/senate/rss/session/executive-nominations',
+            'committee-schedule' => 'https://www.palegis.us/senate/rss/committee/schedule',
+            'committee-assignments' => 'https://www.palegis.us/senate/rss/committee/assignments',
+            'memos' => 'https://www.palegis.us/senate/rss/legislation/memos',
         ],
     ],
 
@@ -64,5 +69,21 @@ return [
         'enabled' => env('PALEGIS_CACHE_ENABLED', true),
         'store' => env('PALEGIS_CACHE_STORE', env('CACHE_STORE')),
         'ttl' => (int) env('PALEGIS_CACHE_TTL', 3600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Bill History Data
+    |--------------------------------------------------------------------------
+    |
+    | The Bill History Data export (a ZIP-wrapped XML listing every bill and
+    | resolution in a session, refreshed hourly on weekdays) is downloaded from
+    | a fixed palegis.us endpoint. The URL is generated automatically and the
+    | session defaults to the current regular session, so there is nothing to
+    | configure here except how long to cache the (large) download.
+    |
+    */
+    'data' => [
+        'ttl' => (int) env('PALEGIS_BILL_HISTORY_TTL', 3600),
     ],
 ];
