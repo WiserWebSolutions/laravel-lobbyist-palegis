@@ -9,7 +9,7 @@ use WiserWebSolutions\Lobbyist\Contracts\Providers\BillLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillTextHistoryLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillTextLookup;
-use WiserWebSolutions\Lobbyist\Contracts\Providers\RepresentativeProvider;
+use WiserWebSolutions\Lobbyist\Contracts\Providers\LegislatorProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\SessionProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\VoteProvider;
 use WiserWebSolutions\Lobbyist\Data\Bill;
@@ -30,23 +30,32 @@ use WiserWebSolutions\Lobbyist\Support\AbstractDriver;
  * bills come from the Bill History Data export — a bulk download of every bill
  * and resolution in the session, which also backs bill lookups by number/id.
  * Votes and members cannot be resolved by arbitrary identifier, so this driver
- * implements VoteProvider/RepresentativeProvider but not their *Lookup
+ * implements VoteProvider/LegislatorProvider but not their *Lookup
  * interfaces; calling vote()/representative() throws
  * {@see UnsupportedOperationException}
- * via {@see AbstractDriver}. Feeds without a core-DTO mapping (calendars,
+ * via {@see AbstractDriver}. {@see legislators()} merges the House and Senate
+ * members feeds; {@see representatives()}/{@see senators()} are that same list
+ * filtered by chamber. Feeds without a core-DTO mapping (calendars,
  * journals, amendments, memos, …) are available on the underlying
  * {@see LaravelPalegis} client.
  *
  * Bill text history is each bill's printer-number history from the Bill
  * History export — every printer's number is one revision of the bill's text.
- * Only a link to the PDF is available (no fetched bytes), so every
- * {@see BillText::$content} from this driver is null; consumers fetch `url`
- * themselves.
+ * {@see PalegisMapper::billTextHistory()} maps them cheaply (each entry's
+ * `url`/`toHTML()` point at the HTML rendering, `toPDF()` at the PDF the
+ * export links directly, with {@see BillText::$content} left null) and is
+ * embedded on every mapped {@see Bill} via {@see Bill::texts()}/{@see Bill::text()}
+ * for free — no extra request beyond the one that already fetched the bill.
+ * {@see billTextHistory()}/{@see billText()} expose the same data at the
+ * driver level for lookups by identifier alone; {@see billText()} additionally
+ * fetches the latest version's HTML and strips it down to plain text for
+ * {@see BillText::$content} (`Bill::text()`'s own `toString()` throws instead,
+ * since it never performs I/O on its own).
  */
 class PalegisDriver extends AbstractDriver implements
     BillLookup,
     BillProvider,
-    RepresentativeProvider,
+    LegislatorProvider,
     SessionProvider,
     VoteProvider,
     BillTextLookup,
@@ -105,7 +114,10 @@ class PalegisDriver extends AbstractDriver implements
             throw new PalegisException("Bill [{$identifier}] has no text versions in the PA bill history.");
         }
 
-        return $latest;
+        $html = $this->client->fetchBillText($latest->url);
+        $content = trim(html_entity_decode(strip_tags($html)));
+
+        return new BillText(meta: [...$latest->meta, 'content' => $content]);
     }
 
     public function votes(): VoteCollection
@@ -119,7 +131,7 @@ class PalegisDriver extends AbstractDriver implements
         return new VoteCollection($votes);
     }
 
-    public function representatives(): LegislatorCollection
+    public function legislators(): LegislatorCollection
     {
         $legislators = [];
 
@@ -128,6 +140,16 @@ class PalegisDriver extends AbstractDriver implements
         }
 
         return new LegislatorCollection($legislators);
+    }
+
+    public function representatives(): LegislatorCollection
+    {
+        return $this->legislators()->byChamber(Chamber::House);
+    }
+
+    public function senators(): LegislatorCollection
+    {
+        return $this->legislators()->byChamber(Chamber::Senate);
     }
 
     private function findBillRecord(string|int $identifier): array

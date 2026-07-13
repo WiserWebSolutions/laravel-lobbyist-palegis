@@ -11,6 +11,7 @@ use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\Vote;
 use WiserWebSolutions\Lobbyist\Enums\Chamber;
 use WiserWebSolutions\Lobbyist\Enums\StateEnum;
+use WiserWebSolutions\Lobbyist\Exceptions\LobbyistException;
 use WiserWebSolutions\Lobbyist\Exceptions\UnsupportedOperationException;
 
 class PalegisDriverTest extends TestCase
@@ -39,7 +40,7 @@ class PalegisDriverTest extends TestCase
         $this->assertSame(Chamber::Senate, $votes->byChamber(Chamber::Senate)->first()->chamber);
     }
 
-    public function test_list_representatives_merges_both_chambers(): void
+    private function fakeMembersFeeds(): void
     {
         Http::fake([
             'www.palegis.us/house/rss/session/members' => Http::response(
@@ -53,13 +54,33 @@ class PalegisDriverTest extends TestCase
                 ])
             ),
         ]);
+    }
 
-        $reps = $this->driver()->setStateContext('PA')->representatives();
+    public function test_legislators_merges_both_chambers(): void
+    {
+        $this->fakeMembersFeeds();
 
-        $this->assertCount(2, $reps);
-        $this->assertContainsOnlyInstancesOf(Legislator::class, $reps);
-        $this->assertSame('Rep. Jane Doe', $reps->byChamber(Chamber::House)->first()->name);
-        $this->assertSame('Sen. John Roe', $reps->byChamber(Chamber::Senate)->first()->name);
+        $legislators = $this->driver()->setStateContext('PA')->legislators();
+
+        $this->assertCount(2, $legislators);
+        $this->assertContainsOnlyInstancesOf(Legislator::class, $legislators);
+        $this->assertSame('Rep. Jane Doe', $legislators->byChamber(Chamber::House)->first()->name);
+        $this->assertSame('Sen. John Roe', $legislators->byChamber(Chamber::Senate)->first()->name);
+    }
+
+    public function test_representatives_and_senators_are_filtered_by_chamber(): void
+    {
+        $this->fakeMembersFeeds();
+
+        $driver = $this->driver()->setStateContext('PA');
+
+        $reps = $driver->representatives();
+        $this->assertCount(1, $reps);
+        $this->assertSame('Rep. Jane Doe', $reps->first()->name);
+
+        $senators = $driver->senators();
+        $this->assertCount(1, $senators);
+        $this->assertSame('Sen. John Roe', $senators->first()->name);
     }
 
     public function test_list_sessions_returns_synthetic_pa_session(): void
@@ -78,19 +99,27 @@ class PalegisDriverTest extends TestCase
 
         $this->assertCount(1, $history);
         $this->assertContainsOnlyInstancesOf(BillText::class, $history);
-        $this->assertStringContainsString('HB0017/PN0002', $history->first()->url);
+        $this->assertSame('https://www.palegis.us/legislation/bills/text/HTM/2025/0/HB0017/PN0002', $history->first()->url);
         $this->assertSame('01/08/25', $history->first()->date?->format('m/d/y'));
         $this->assertNull($history->first()->content);
     }
 
-    public function test_bill_text_returns_the_latest_version(): void
+    public function test_bill_text_returns_the_latest_version_with_fetched_content(): void
     {
         $this->fakeBillHistory();
+
+        Http::fake([
+            'www.palegis.us/legislation/bills/text/HTM/2025/0/HB0017/PN0002' => Http::response(
+                '<html><body><p>bill text</p></body></html>'
+            ),
+        ]);
 
         $text = $this->driver()->setStateContext('PA')->billText('HB17');
 
         $this->assertInstanceOf(BillText::class, $text);
-        $this->assertStringContainsString('HB0017/PN0002', $text->url);
+        $this->assertSame('https://www.palegis.us/legislation/bills/text/HTM/2025/0/HB0017/PN0002', $text->url);
+        $this->assertSame('bill text', $text->content);
+        $this->assertSame('bill text', $text->toString());
     }
 
     public function test_bill_text_throws_when_the_bill_has_no_printers_numbers(): void
@@ -101,6 +130,35 @@ class PalegisDriverTest extends TestCase
         $this->expectExceptionMessageMatches('/no text versions/');
 
         $this->driver()->setStateContext('PA')->billText('SB100');
+    }
+
+    public function test_bill_returns_a_fluent_text_accessor(): void
+    {
+        $this->fakeBillHistory();
+
+        // bill()->text() is populated straight from the already-fetched Bill
+        // History record, so the HTML/PDF links work with no extra request —
+        // but the literal text (toString()) requires an explicit driver
+        // fetch via billText(), since Bill::text() never performs I/O itself.
+        $text = $this->driver()->setStateContext('PA')->bill('HB17')->text();
+
+        $this->assertSame('https://www.palegis.us/legislation/bills/text/HTM/2025/0/HB0017/PN0002', $text->toHTML());
+        $this->assertSame('https://www.palegis.us/legislation/bills/text/PDF/2025/0/HB0017/PN0002', $text->toPDF());
+
+        $this->expectException(LobbyistException::class);
+        $this->expectExceptionMessageMatches('/does not have bill text support \(toString\(\)\)/');
+
+        $text->toString();
+    }
+
+    public function test_bill_text_accessor_throws_when_the_bill_has_no_printers_numbers(): void
+    {
+        $this->fakeBillHistory();
+
+        $this->expectException(LobbyistException::class);
+        $this->expectExceptionMessageMatches('/does not have bill text support/');
+
+        $this->driver()->setStateContext('PA')->bill('SB100')->text()->toHTML();
     }
 
     public function test_unsupported_lookups_throw(): void

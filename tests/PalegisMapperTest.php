@@ -6,6 +6,7 @@ use WiserWebSolutions\LaravelPalegis\Support\PalegisMapper;
 use WiserWebSolutions\Lobbyist\Data\BillText;
 use WiserWebSolutions\Lobbyist\Enums\Chamber;
 use WiserWebSolutions\Lobbyist\Enums\StateEnum;
+use WiserWebSolutions\Lobbyist\Exceptions\LobbyistException;
 
 class PalegisMapperTest extends TestCase
 {
@@ -53,7 +54,7 @@ class PalegisMapperTest extends TestCase
                 ['name' => 'WATRO', 'party' => 'R', 'body' => 'H', 'district' => '116', 'sequence' => '01'],
             ],
             'printers_numbers' => [
-                ['sequence' => '01', 'number' => '0002', 'pdf_url' => 'https://example.test/HB0017/PN0002'],
+                ['sequence' => '01', 'number' => '0002', 'pdf_url' => 'https://www.palegis.us/legislation/bills/text/PDF/2025/0/HB0017/PN0002'],
             ],
             'actions' => [
                 ['sequence' => '01', 'full_action' => 'Referred to EDUCATION', 'date' => '01/08/25'],
@@ -83,12 +84,50 @@ class PalegisMapperTest extends TestCase
         $this->assertArrayNotHasKey('raw', $bill->meta);
     }
 
+    public function test_bill_text_exposes_the_html_and_pdf_links(): void
+    {
+        $bill = PalegisMapper::billFromHistory($this->billRecord());
+
+        $text = $bill->text();
+
+        $this->assertInstanceOf(BillText::class, $text);
+        $this->assertSame('https://www.palegis.us/legislation/bills/text/HTM/2025/0/HB0017/PN0002', $text->toHTML());
+        $this->assertSame('https://www.palegis.us/legislation/bills/text/PDF/2025/0/HB0017/PN0002', $text->toPDF());
+    }
+
+    public function test_bill_text_to_string_throws_without_a_driver_fetch(): void
+    {
+        // Bill::text() is a pure read of already-mapped data — it never
+        // performs I/O on its own. Fetching the literal text requires
+        // PalegisDriver::billText(), which is what actually calls the HTTP
+        // client and strips the HTML down to plain text.
+        $bill = PalegisMapper::billFromHistory($this->billRecord());
+
+        $this->expectException(LobbyistException::class);
+        $this->expectExceptionMessageMatches('/does not have bill text support \(toString\(\)\)/');
+
+        $bill->text()->toString();
+    }
+
+    public function test_bill_text_falls_back_to_unsupported_without_a_printers_number(): void
+    {
+        $record = $this->billRecord();
+        $record['printers_numbers'] = [];
+
+        $bill = PalegisMapper::billFromHistory($record);
+
+        $this->assertCount(0, $bill->texts());
+        $this->expectException(LobbyistException::class);
+
+        $bill->text()->toHTML();
+    }
+
     public function test_bill_text_history_maps_each_printers_number_with_no_content(): void
     {
         $record = $this->billRecord();
         $record['printers_numbers'] = [
-            ['sequence' => '01', 'number' => '0002', 'pdf_url' => 'https://example.test/HB0017/PN0002'],
-            ['sequence' => '02', 'number' => '0101', 'pdf_url' => 'https://example.test/HB0017/PN0101'],
+            ['sequence' => '01', 'number' => '0002', 'pdf_url' => 'https://www.palegis.us/legislation/bills/text/PDF/2025/0/HB0017/PN0002'],
+            ['sequence' => '02', 'number' => '0101', 'pdf_url' => 'https://www.palegis.us/legislation/bills/text/PDF/2025/0/HB0017/PN0101'],
         ];
         $record['actions'] = [
             ['full_action' => 'Referred to EDUCATION', 'date' => '01/08/25', 'printers_number' => '0002'],
@@ -99,7 +138,8 @@ class PalegisMapperTest extends TestCase
 
         $this->assertCount(2, $history);
         $this->assertContainsOnlyInstancesOf(BillText::class, $history);
-        $this->assertSame('https://example.test/HB0017/PN0101', $history->last()->url);
+        $this->assertSame('https://www.palegis.us/legislation/bills/text/HTM/2025/0/HB0017/PN0101', $history->last()->url);
+        $this->assertSame('text/html', $history->last()->mime);
         $this->assertSame('01/08/25', $history->first()->date?->format('m/d/y'));
         $this->assertNull($history->first()->content);
         $this->assertSame('20250HB0017', $history->first()->billId);

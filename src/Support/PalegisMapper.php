@@ -59,6 +59,7 @@ class PalegisMapper
             'last_action' => $lastAction['full_action'] ?? '',
             'last_action_date' => $lastAction['date'] ?? null,
             'url' => $lastPrinters['pdf_url'] ?? '',
+            'texts' => self::billTextHistory($record),
         ];
 
         if ($includeRaw) {
@@ -70,10 +71,13 @@ class PalegisMapper
 
     /**
      * Map a Bill History record's printer-number history to a version-by-version
-     * {@see BillTextCollection}. Each printer's number is one text revision;
-     * only a link to its PDF is available (no fetched bytes), and its date is
-     * recovered from the action that first reported that printer's number, if
-     * any.
+     * {@see BillTextCollection}. Each printer's number is one text revision,
+     * offered in two formats: its primary `url` is the HTML rendering (used
+     * for {@see BillText::toString()}'s stripped-text fetch), and `links`
+     * carries the PDF the export gives us directly. No fetched bytes here —
+     * {@see PalegisDriver::billText()} fetches the latest version's content
+     * lazily. Each entry's date is recovered from the action that first
+     * reported that printer's number, if any.
      */
     public static function billTextHistory(array $record): BillTextCollection
     {
@@ -85,14 +89,29 @@ class PalegisMapper
                     'id' => $printer['number'] ?? '',
                     'bill_id' => $billId,
                     'type' => "Printer's Number {$printer['number']}",
-                    'mime' => 'application/pdf',
+                    'mime' => 'text/html',
                     'date' => self::printersNumberDate($record, $printer),
-                    'url' => $printer['pdf_url'] ?? '',
+                    'url' => self::htmUrl($printer['pdf_url'] ?? ''),
+                    'links' => ($printer['pdf_url'] ?? '') !== ''
+                        ? ['application/pdf' => $printer['pdf_url']]
+                        : [],
                     'raw' => $printer,
                 ]),
                 $record['printers_numbers'] ?? []
             )
         );
+    }
+
+    /**
+     * palegis.us publishes each printer's number as both a PDF and an HTML
+     * page at the same path with only the format segment differing
+     * (".../text/PDF/…" vs ".../text/HTM/…"). The Bill History export only
+     * gives us the PDF link, so derive the HTML one from it rather than
+     * rebuilding the path from its parts.
+     */
+    private static function htmUrl(string $pdfUrl): string
+    {
+        return str_replace('/text/PDF/', '/text/HTM/', $pdfUrl);
     }
 
     /**

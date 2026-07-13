@@ -49,7 +49,9 @@ $pa = Lobbyist::state('PA'); // PalegisDriver
 $pa->bills();            // BillCollection (all bills/resolutions from Bill History Data)
 $pa->bill('HB17');       // Bill (lookup by number or full id)
 $pa->votes();            // VoteCollection (House + Senate roll-call feeds)
-$pa->representatives();  // LegislatorCollection (House + Senate members feeds)
+$pa->legislators();      // LegislatorCollection (House + Senate members feeds)
+$pa->representatives();  // LegislatorCollection (House only)
+$pa->senators();          // LegislatorCollection (Senate only)
 $pa->sessions();         // SessionCollection (current General Assembly)
 ```
 
@@ -64,7 +66,7 @@ is expensive; `bill()` filters that same cached dataset.
 
 **Votes and members** come from the RSS feeds, which are **browse-only** — they
 publish what is current but cannot resolve an arbitrary id. So the driver
-implements `VoteProvider`/`RepresentativeProvider` but not their `*Lookup`
+implements `VoteProvider`/`LegislatorProvider` but not their `*Lookup`
 interfaces; calling `vote()` or `representative()` throws
 `UnsupportedOperationException`. Fields the feeds do not carry (e.g. vote
 tallies) are left `null`.
