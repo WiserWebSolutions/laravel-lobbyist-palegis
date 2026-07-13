@@ -14,18 +14,19 @@ class BillHistoryCacheTest extends TestCase
         return new BillHistoryCache(Cache::store('array'), 3600, $chunkSize);
     }
 
-    /** @return array{export_date: string, total: int, session: string, bills: array<int, array>} */
-    private function parsed(): array
+    /**
+     * Mirrors the shape {@see \WiserWebSolutions\LaravelPalegis\Support\BillHistoryFetcher::fetchStream()}
+     * hands to {@see BillHistoryCache::put()}: an iterable of bills whose
+     * export_date/total are recovered via Generator::getReturn().
+     *
+     * @return \Generator<int, array>
+     */
+    private function parsedBills(): \Generator
     {
-        return [
-            'export_date' => 'July 9, 2026 7:30:08 PM EDT',
-            'total' => 2,
-            'session' => '2025_0',
-            'bills' => [
-                ['id' => '20250HB0017', 'designator' => 'HB17', 'short_title' => 'Cursive handwriting'],
-                ['id' => '20250SB0100', 'designator' => 'SB100', 'short_title' => 'Appropriations'],
-            ],
-        ];
+        yield ['id' => '20250HB0017', 'designator' => 'HB17', 'short_title' => 'Cursive handwriting'];
+        yield ['id' => '20250SB0100', 'designator' => 'SB100', 'short_title' => 'Appropriations'];
+
+        return ['export_date' => 'July 9, 2026 7:30:08 PM EDT', 'total' => 2];
     }
 
     public function test_has_index_is_false_before_any_put(): void
@@ -36,7 +37,7 @@ class BillHistoryCacheTest extends TestCase
     public function test_put_then_all_reassembles_the_full_session_payload_in_order(): void
     {
         $cache = $this->cache();
-        $cache->put('2025_0', $this->parsed());
+        $cache->put('2025_0', $this->parsedBills());
 
         $this->assertTrue($cache->hasIndex('2025_0'));
 
@@ -52,7 +53,7 @@ class BillHistoryCacheTest extends TestCase
     public function test_find_locates_a_bill_by_full_id(): void
     {
         $cache = $this->cache();
-        $cache->put('2025_0', $this->parsed());
+        $cache->put('2025_0', $this->parsedBills());
 
         $record = $cache->find('2025_0', '20250HB0017');
 
@@ -62,7 +63,7 @@ class BillHistoryCacheTest extends TestCase
     public function test_find_locates_a_bill_by_normalized_designator_case_and_padding_insensitive(): void
     {
         $cache = $this->cache();
-        $cache->put('2025_0', $this->parsed());
+        $cache->put('2025_0', $this->parsedBills());
 
         $this->assertSame('Cursive handwriting', $cache->find('2025_0', 'hb0017')['short_title']);
         $this->assertSame('Appropriations', $cache->find('2025_0', 'sb100')['short_title']);
@@ -71,7 +72,7 @@ class BillHistoryCacheTest extends TestCase
     public function test_find_returns_null_for_an_unrecognized_identifier(): void
     {
         $cache = $this->cache();
-        $cache->put('2025_0', $this->parsed());
+        $cache->put('2025_0', $this->parsedBills());
 
         $this->assertNull($cache->find('2025_0', 'HB9999'));
     }
@@ -79,7 +80,7 @@ class BillHistoryCacheTest extends TestCase
     public function test_all_returns_null_when_a_per_bill_entry_is_missing_even_though_the_index_exists(): void
     {
         $cache = $this->cache();
-        $cache->put('2025_0', $this->parsed());
+        $cache->put('2025_0', $this->parsedBills());
 
         Cache::store('array')->forget('palegis:bill-history:2025_0:bill:20250SB0100');
 
@@ -92,7 +93,7 @@ class BillHistoryCacheTest extends TestCase
         // chunkSize=1 forces two separate many() reads for the two cached
         // bills, proving chunk boundaries don't drop or duplicate records.
         $cache = $this->cache(chunkSize: 1);
-        $cache->put('2025_0', $this->parsed());
+        $cache->put('2025_0', $this->parsedBills());
 
         $ids = [];
         foreach ($cache->each('2025_0') as $record) {
@@ -105,7 +106,7 @@ class BillHistoryCacheTest extends TestCase
     public function test_each_throws_bill_history_cache_miss_when_a_bill_is_evicted_mid_stream(): void
     {
         $cache = $this->cache(chunkSize: 1);
-        $cache->put('2025_0', $this->parsed());
+        $cache->put('2025_0', $this->parsedBills());
 
         Cache::store('array')->forget('palegis:bill-history:2025_0:bill:20250SB0100');
 

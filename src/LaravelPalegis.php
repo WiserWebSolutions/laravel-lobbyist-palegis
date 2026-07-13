@@ -342,8 +342,13 @@ class LaravelPalegis
      * If the cache has been populated (typically by the scheduled
      * `palegis:sync-bill-history` command), this reassembles the result
      * from the per-bill cache entries without a live download. On a cold or
-     * expired cache it falls back to downloading and parsing the export
-     * directly, populating the cache for next time.
+     * expired cache it falls back to {@see syncBillHistory()} (which itself
+     * never holds more than one bill in memory at a time while
+     * downloading/caching) and then reassembles from the now-warm cache.
+     *
+     * Prefer {@see eachBillHistoryRecord()} or {@see findBill()} when a
+     * caller doesn't need the whole session materialized at once — this
+     * method's return value inherently does, by contract.
      *
      * @param  string|null  $session  palegis session id (e.g. "2025_0"); null
      *                                auto-detects the current regular session.
@@ -367,7 +372,18 @@ class LaravelPalegis
      * Download, parse, and cache the Bill History Data export for a
      * session, one cache entry per bill. This is the reusable "sync"
      * operation shared by the `palegis:sync-bill-history` command and the
-     * live fallback inside {@see getBillHistory()}.
+     * live fallbacks inside {@see getBillHistory()}, {@see findBill()}, and
+     * {@see eachBillHistoryRecord()}.
+     *
+     * The download and parse are streamed ({@see BillHistoryFetcher::fetchStream()}),
+     * and the cache is written in chunks as bills stream in ({@see BillHistoryCache::put()}),
+     * so no more than one bill's data is ever resident in memory at once
+     * during the expensive part of this operation — regardless of how many
+     * thousands of bills a session holds. The return value here is still
+     * fully materialized (reassembled from the now-warm cache via cheap
+     * chunked reads), since that's this method's contract; callers who
+     * don't need the whole thing back should use {@see eachBillHistoryRecord()}
+     * or {@see findBill()} instead of relying on this return value.
      *
      * @return array{export_date: string, total: int, session: string, bills: array<int, array>}
      *
@@ -376,20 +392,37 @@ class LaravelPalegis
     public function syncBillHistory(?string $session = null, ?int $ttl = null): array
     {
         $session ??= $this->currentSession();
+        $ttl ??= $this->data['ttl'] ?? null;
 
-        $parsed = $this->fetcher->fetch($session);
+        $bills = $this->fetcher->fetchStream($session);
 
-        if ($this->cache['enabled'] ?? false) {
-            $this->billHistoryCache->put($session, $parsed, $ttl ?? ($this->data['ttl'] ?? null));
+        if (! ($this->cache['enabled'] ?? false)) {
+            $collected = iterator_to_array($bills, false);
+            $meta = $bills->getReturn();
+
+            return [
+                'export_date' => $meta['export_date'] ?? '',
+                'total' => $meta['total'] ?? count($collected),
+                'session' => $session,
+                'bills' => $collected,
+            ];
         }
 
-        return $parsed;
+        $this->billHistoryCache->put($session, $bills, $ttl);
+
+        return $this->billHistoryCache->all($session) ?? [
+            'export_date' => '',
+            'total' => 0,
+            'session' => $session,
+            'bills' => [],
+        ];
     }
 
     /**
      * Look up a single bill's raw Bill History record by id or designator,
-     * without materializing the full bill list when the cache can answer
-     * directly.
+     * without ever materializing the full bill list — on a cold/expired
+     * cache this syncs (streamed, chunked) and then reads the one record
+     * straight back out of the now-warm cache.
      *
      * @return array|null The raw bill record, or null if not found
      *
@@ -403,11 +436,11 @@ class LaravelPalegis
             return $this->scanBills($this->fetcher->fetch($session)['bills'] ?? [], $identifier);
         }
 
-        if ($this->billHistoryCache->hasIndex($session)) {
-            return $this->billHistoryCache->find($session, $identifier);
+        if (! $this->billHistoryCache->hasIndex($session)) {
+            $this->syncBillHistory($session);
         }
 
-        return $this->scanBills($this->syncBillHistory($session)['bills'] ?? [], $identifier);
+        return $this->billHistoryCache->find($session, $identifier);
     }
 
     /**
@@ -416,7 +449,11 @@ class LaravelPalegis
      * that transform every record anyway and don't need the whole raw list
      * to exist in memory at once alongside the transformed output.
      *
-     * On a warm cache this reads in chunks via {@see BillHistoryCache::each()}.
+     * On a cold/expired cache this syncs first — streamed and cached in
+     * chunks, never materializing the full session — and then reads back
+     * via {@see BillHistoryCache::each()}, so this never holds more than a
+     * chunk's worth of records in memory regardless of cache state.
+     *
      * If a chunk reveals a per-bill entry that expired independently of the
      * index, this throws {@see Support\BillHistoryCacheMiss} — the caller
      * should catch it, discard whatever it's built so far, and fall back to
@@ -437,13 +474,11 @@ class LaravelPalegis
             return;
         }
 
-        if ($this->billHistoryCache->hasIndex($session)) {
-            yield from $this->billHistoryCache->each($session);
-
-            return;
+        if (! $this->billHistoryCache->hasIndex($session)) {
+            $this->syncBillHistory($session);
         }
 
-        yield from $this->syncBillHistory($session)['bills'] ?? [];
+        yield from $this->billHistoryCache->each($session);
     }
 
     /**
@@ -458,6 +493,18 @@ class LaravelPalegis
         }
 
         return null;
+    }
+
+    /**
+     * Fetch the HTML text of a single Bill History printer's-number version,
+     * from the `url` on a {@see \WiserWebSolutions\Lobbyist\Data\BillText}
+     * produced by {@see Support\PalegisMapper::billTextHistory()}.
+     *
+     * @throws PalegisException When the request fails
+     */
+    public function fetchBillText(string $url): string
+    {
+        return $this->remember('bill-text:'.$url, fn () => $this->fetchBody($url));
     }
 
     /**

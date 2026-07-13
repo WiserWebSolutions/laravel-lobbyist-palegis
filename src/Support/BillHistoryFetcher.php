@@ -10,9 +10,15 @@ use WiserWebSolutions\LaravelPalegis\Support\Concerns\FetchesHttp;
  * Downloads and parses the palegis.us Bill History Data export for a
  * session. Pure fetch+parse — no caching knowledge.
  *
- * NOTE: the export is large (thousands of bills / tens of MB uncompressed);
- * parsing loads the whole document into memory. Callers that cache the
- * result should do so per-bill rather than as a single blob.
+ * The export is large (thousands of bills / tens of MB uncompressed once
+ * unzipped), so {@see fetchStream()} never holds the parsed side of it in
+ * memory at once: the (much smaller, compressed) ZIP is downloaded and
+ * written to a temp file, its XML entry is copied to a second temp file,
+ * and that file is read one <bill> at a time via XMLReader — expanding just
+ * that element into SimpleXML — rather than parsed whole into a DOM tree
+ * and a single giant PHP array. {@see fetch()} is a convenience wrapper
+ * around it for callers that explicitly want (and can afford) the whole
+ * array at once.
  */
 class BillHistoryFetcher
 {
@@ -34,7 +40,9 @@ class BillHistoryFetcher
     }
 
     /**
-     * Download the Bill History ZIP, extract its XML, and parse it.
+     * Download, parse, and fully materialize the Bill History export for a
+     * session. Prefer {@see fetchStream()} whenever every bill is about to
+     * be transformed or cached anyway.
      *
      * @return array{export_date: string, total: int, session: string, bills: array<int, array>}
      *
@@ -42,28 +50,75 @@ class BillHistoryFetcher
      */
     public function fetch(string $session): array
     {
+        $bills = $this->fetchStream($session);
+        $collected = iterator_to_array($bills, false);
+        $meta = $bills->getReturn();
+
+        return [
+            'export_date' => $meta['export_date'] ?? '',
+            'total' => $meta['total'] ?? count($collected),
+            'session' => $session,
+            'bills' => $collected,
+        ];
+    }
+
+    /**
+     * Stream a session's Bill History export one bill at a time.
+     *
+     * Never holds more than one bill's parsed data (plus XMLReader's own
+     * small lookahead buffer) in memory: the ZIP downloads straight to a
+     * temp file, its XML entry is copied to a second temp file, and
+     * XMLReader walks that file expanding one <bill> subtree at a time into
+     * SimpleXML (so the existing per-bill parsing logic can stay the same).
+     * Both temp files are removed once the generator is exhausted or
+     * abandoned.
+     *
+     * The export's `exportDate`/`totalDocuments` attributes (on the
+     * document root, read before the first bill is yielded) are available
+     * via the generator's return value once it's fully consumed, e.g.
+     * `$meta = $bills->getReturn();` after a `foreach`.
+     *
+     * @return \Generator<int, array, mixed, array{export_date: string, total: int}>
+     *
+     * @throws PalegisException
+     */
+    public function fetchStream(string $session): \Generator
+    {
+        $zipPath = $this->downloadZip($session);
+
+        try {
+            $xmlPath = $this->extractXmlToTempFile($zipPath);
+        } finally {
+            @unlink($zipPath);
+        }
+
+        try {
+            return yield from $this->streamXml($xmlPath);
+        } finally {
+            @unlink($xmlPath);
+        }
+    }
+
+    /**
+     * @throws PalegisException
+     */
+    protected function downloadZip(string $session): string
+    {
         $body = $this->fetchBody(
             $this->url($session),
             "The session [{$session}] may be invalid or not yet published. "
             ."Session ids look like '2025_0' (regular) or '2025_1' (special session)."
         );
 
-        $xmlString = $this->extractXmlFromZip($body);
+        $tmp = tempnam(sys_get_temp_dir(), 'palegis_bh_zip_');
 
-        $previous = libxml_use_internal_errors(true);
-
-        try {
-            $xml = simplexml_load_string($xmlString);
-        } finally {
-            libxml_clear_errors();
-            libxml_use_internal_errors($previous);
+        if ($tmp === false) {
+            throw new PalegisException('Unable to create a temp file for the Bill History archive');
         }
 
-        if ($xml === false) {
-            throw new PalegisException('Invalid XML in Bill History export');
-        }
+        file_put_contents($tmp, $body);
 
-        return $this->parse($xml, $session);
+        return $tmp;
     }
 
     /**
@@ -78,69 +133,119 @@ class BillHistoryFetcher
     }
 
     /**
-     * Extract the first XML entry from a ZIP archive given as a binary string.
+     * Copy the first .xml entry out of a ZIP archive into its own temp file,
+     * streaming through ZipArchive's own stream rather than reading the
+     * entry into a PHP string.
      *
      * @throws PalegisException
      */
-    protected function extractXmlFromZip(string $zipBinary): string
+    protected function extractXmlToTempFile(string $zipPath): string
     {
-        $tmp = tempnam(sys_get_temp_dir(), 'palegis_bh_');
+        $zip = new \ZipArchive;
 
-        if ($tmp === false) {
-            throw new PalegisException('Unable to create a temp file for the Bill History archive');
+        if ($zip->open($zipPath) !== true) {
+            throw new PalegisException('Unable to open the Bill History archive');
         }
 
         try {
-            file_put_contents($tmp, $zipBinary);
-
-            $zip = new \ZipArchive;
-
-            if ($zip->open($tmp) !== true) {
-                throw new PalegisException('Unable to open the Bill History archive');
-            }
-
-            $contents = false;
+            $entryName = null;
 
             for ($i = 0; $i < $zip->numFiles; $i++) {
                 if (str_ends_with(strtolower((string) $zip->getNameIndex($i)), '.xml')) {
-                    $contents = $zip->getFromIndex($i);
+                    $entryName = $zip->getNameIndex($i);
                     break;
                 }
             }
 
-            $zip->close();
+            if ($entryName === null) {
+                throw new PalegisException('No XML entry found in the Bill History archive');
+            }
+
+            $source = $zip->getStream($entryName);
+
+            if ($source === false) {
+                throw new PalegisException('Unable to read the XML entry from the Bill History archive');
+            }
+
+            $destPath = tempnam(sys_get_temp_dir(), 'palegis_bh_xml_');
+
+            if ($destPath === false) {
+                fclose($source);
+
+                throw new PalegisException('Unable to create a temp file for the Bill History XML');
+            }
+
+            $dest = fopen($destPath, 'wb');
+            stream_copy_to_stream($source, $dest);
+            fclose($source);
+            fclose($dest);
+
+            return $destPath;
         } finally {
-            @unlink($tmp);
+            $zip->close();
         }
-
-        if (! is_string($contents) || $contents === '') {
-            throw new PalegisException('No XML entry found in the Bill History archive');
-        }
-
-        return $contents;
     }
 
     /**
-     * Parse a Bill History <historyExport> document into a structured array.
+     * Walk a Bill History XML file one <bill> at a time via XMLReader,
+     * expanding just that element into a SimpleXMLElement for
+     * {@see parseBill()} rather than parsing the whole document at once.
      *
-     * @return array{export_date: string, total: int, session: string, bills: array<int, array>}
+     * @return \Generator<int, array, mixed, array{export_date: string, total: int}>
+     *
+     * @throws PalegisException
      */
-    protected function parse(\SimpleXMLElement $xml, string $session): array
+    protected function streamXml(string $path): \Generator
     {
-        $bills = [];
+        $reader = new \XMLReader;
+        $previousErrorHandling = libxml_use_internal_errors(true);
 
-        foreach ($xml->session as $sessionNode) {
-            foreach ($sessionNode->bill as $bill) {
-                $bills[] = $this->parseBill($bill);
-            }
+        if (! $reader->open($path)) {
+            libxml_use_internal_errors($previousErrorHandling);
+
+            throw new PalegisException('Invalid XML in Bill History export');
         }
 
-        return [
-            'export_date' => (string) $xml['exportDate'],
-            'total' => (int) $xml['totalDocuments'],
-            'session' => $session,
-            'bills' => $bills,
-        ];
+        $meta = ['export_date' => '', 'total' => 0];
+
+        try {
+            while ($reader->read()) {
+                if ($reader->nodeType !== \XMLReader::ELEMENT) {
+                    continue;
+                }
+
+                if ($reader->name === 'historyExport') {
+                    $meta['export_date'] = (string) $reader->getAttribute('exportDate');
+                    $meta['total'] = (int) $reader->getAttribute('totalDocuments');
+
+                    continue;
+                }
+
+                if ($reader->name !== 'bill') {
+                    continue;
+                }
+
+                $node = $reader->expand();
+                $dom = new \DOMDocument;
+                $dom->appendChild($dom->importNode($node, true));
+
+                yield $this->parseBill(simplexml_import_dom($dom->documentElement));
+
+                // Skip past the subtree we just expanded rather than
+                // re-walking its children node by node.
+                $reader->next();
+            }
+
+            if (libxml_get_errors() !== []) {
+                throw new PalegisException('Invalid XML in Bill History export');
+            }
+        } finally {
+            $reader->close();
+            libxml_clear_errors();
+            libxml_use_internal_errors($previousErrorHandling);
+        }
+
+        return $meta;
     }
 
     /**

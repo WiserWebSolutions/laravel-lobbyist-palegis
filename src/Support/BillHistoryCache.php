@@ -132,13 +132,25 @@ class BillHistoryCache
     }
 
     /**
-     * Write every bill from a parsed Bill History export as its own cache
-     * entry, then write the session index last, so a reader can never see
-     * an index pointing at bills that haven't been written yet.
+     * Write every bill from a Bill History export as its own cache entry,
+     * then write the session index last, so a reader can never see an index
+     * pointing at bills that haven't been written yet.
      *
-     * @param  array{export_date: string, total: int, session: string, bills: array<int, array>}  $parsed
+     * Accepts any iterable of bills — typically {@see BillHistoryFetcher::fetchStream()}'s
+     * generator, so no more than one bill's raw XML fragment and its parsed
+     * array are ever resident in memory at once, on top of the current
+     * {@see $chunkSize}-sized write batch (mirroring the batching {@see readChunked()}
+     * already does for reads — a single putMany() call for a whole
+     * session's bills would otherwise require the raw values, their
+     * serialized form, and the upsert payload to all be resident at once).
+     * When $bills is that generator, its export_date/total (available via
+     * {@see \Generator::getReturn()} once fully consumed) populate the
+     * index automatically; for a plain array, 'total' falls back to the
+     * count of ids written and 'export_date' to ''.
+     *
+     * @param  iterable<int, array>  $bills
      */
-    public function put(string $session, array $parsed, ?int $ttl = null): void
+    public function put(string $session, iterable $bills, ?int $ttl = null): void
     {
         $ttl ??= $this->ttl;
 
@@ -146,7 +158,7 @@ class BillHistoryCache
         $designatorMap = [];
         $values = [];
 
-        foreach ($parsed['bills'] ?? [] as $bill) {
+        foreach ($bills as $bill) {
             $id = (string) ($bill['id'] ?? '');
             $ids[] = $id;
             $values[$this->billKey($session, $id)] = $bill;
@@ -154,15 +166,22 @@ class BillHistoryCache
             if (! empty($bill['designator'])) {
                 $designatorMap[BillIdentifier::normalize((string) $bill['designator'])] = $id;
             }
+
+            if (count($values) >= $this->chunkSize) {
+                $this->store->putMany($values, $ttl);
+                $values = [];
+            }
         }
 
         if ($values !== []) {
             $this->store->putMany($values, $ttl);
         }
 
+        $meta = $bills instanceof \Generator ? $bills->getReturn() : null;
+
         $this->store->put($this->indexKey($session), [
-            'export_date' => $parsed['export_date'] ?? '',
-            'total' => $parsed['total'] ?? count($ids),
+            'export_date' => $meta['export_date'] ?? '',
+            'total' => $meta['total'] ?? count($ids),
             'bill_ids' => $ids,
             'designator_map' => $designatorMap,
         ], $ttl);

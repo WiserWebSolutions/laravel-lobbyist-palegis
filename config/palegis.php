@@ -83,9 +83,12 @@ return [
     |
     | Rather than caching the (large) export as a single blob, each bill is
     | cached under its own key, so no cache write ever has to serialize more
-    | than one bill's data at a time. Run `php artisan palegis:sync-bill-history`
-    | to populate/refresh the cache; getBillHistory()/bill() lookups fall back
-    | to a live download automatically if the cache is cold or has expired.
+    | than one bill's data at a time. The download and parse are streamed
+    | too (see BillHistoryFetcher::fetchStream()), so even a cold/expired
+    | cache resyncs without holding the whole session in memory at once.
+    | Run `php artisan palegis:sync-bill-history` to populate/refresh the
+    | cache ahead of time; getBillHistory()/bill() lookups fall back to a
+    | live download automatically if the cache is cold or has expired.
     |
     | To keep the cache warm, schedule the sync command in the app's own
     | console kernel/routes, e.g.:
