@@ -12,11 +12,13 @@ class RegistrationTest extends TestCase
 {
     use AssertsDriverContract;
 
-    public function test_the_driver_is_registered_under_its_own_name(): void
+    public function test_the_driver_is_registered_under_the_state_abbreviation(): void
     {
-        $driver = Lobbyist::driver('palegis');
+        // Which is what makes Lobbyist::state('PA') resolve here.
+        $driver = Lobbyist::driver('pa');
 
         $this->assertInstanceOf(PalegisDriver::class, $driver);
+        $this->assertInstanceOf(PalegisDriver::class, Lobbyist::state('PA'));
     }
 
     public function test_driver_honours_contract(): void
@@ -35,8 +37,8 @@ class RegistrationTest extends TestCase
         $this->assertTrue($driver->supports(Capability::GetBillText));
         $this->assertTrue($driver->supports(Capability::ListBillTextHistory));
 
-        // The reason to install this alongside a bill driver rather than
-        // instead of one.
+        // The reason to install this at all: the assignments and schedules no
+        // aggregator publishes.
         $this->assertTrue($driver->supports(Capability::ListCommitteeAssignments));
         $this->assertTrue($driver->supports(Capability::ListCommitteeMeetings));
         $this->assertFalse($driver->supports(Capability::GetVote));
