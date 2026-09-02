@@ -50,22 +50,13 @@ use WiserWebSolutions\Lobbyist\Support\AbstractDriver;
  * export links directly, with {@see BillText::$content} left null) and is
  * embedded on every mapped {@see Bill} via {@see Bill::texts()}/{@see Bill::text()}
  * for free — no extra request beyond the one that already fetched the bill.
- * {@see billTextHistory()}/{@see billText()} expose the same data at the
- * driver level for lookups by identifier alone; {@see billText()} additionally
+ * {@see billTextHistory()}/{@see BillText()} expose the same data at the
+ * driver level for lookups by identifier alone; {@see BillText()} additionally
  * fetches the latest version's HTML and strips it down to plain text for
  * {@see BillText::$content} (`Bill::text()`'s own `toString()` throws instead,
  * since it never performs I/O on its own).
  */
-class PalegisDriver extends AbstractDriver implements
-    BillLookup,
-    BillProvider,
-    LegislatorProvider,
-    SessionProvider,
-    VoteProvider,
-    BillTextLookup,
-    CommitteeAssignmentProvider,
-    CommitteeScheduleProvider,
-    BillTextHistoryLookup
+class PalegisDriver extends AbstractDriver implements BillLookup, BillProvider, BillTextHistoryLookup, BillTextLookup, CommitteeAssignmentProvider, CommitteeScheduleProvider, LegislatorProvider, SessionProvider, VoteProvider
 {
     /** @var array<string, Chamber> */
     private const CHAMBERS = [

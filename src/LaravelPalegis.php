@@ -9,6 +9,7 @@ use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCache;
 use WiserWebSolutions\LaravelPalegis\Support\BillHistoryFetcher;
 use WiserWebSolutions\LaravelPalegis\Support\BillIdentifier;
 use WiserWebSolutions\LaravelPalegis\Support\Concerns\FetchesHttp;
+use WiserWebSolutions\Lobbyist\Data\BillText;
 
 class LaravelPalegis
 {
@@ -539,7 +540,7 @@ class LaravelPalegis
 
     /**
      * Fetch the HTML text of a single Bill History printer's-number version,
-     * from the `url` on a {@see \WiserWebSolutions\Lobbyist\Data\BillText}
+     * from the `url` on a {@see BillText}
      * produced by {@see Support\PalegisMapper::billTextHistory()}.
      *
      * @throws PalegisException When the request fails

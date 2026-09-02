@@ -3,8 +3,8 @@
 namespace WiserWebSolutions\LaravelPalegis\Tests;
 
 use Illuminate\Support\Facades\Http;
-use WiserWebSolutions\Lobbyist\Contracts\Capability;
 use WiserWebSolutions\LaravelPalegis\PalegisDriver;
+use WiserWebSolutions\Lobbyist\Contracts\Capability;
 
 class CommitteeFeedsTest extends TestCase
 {

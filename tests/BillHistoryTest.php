@@ -193,5 +193,4 @@ class BillHistoryTest extends TestCase
         $this->assertCount(2, $bills);
         Http::assertSentCount(2);
     }
-
 }

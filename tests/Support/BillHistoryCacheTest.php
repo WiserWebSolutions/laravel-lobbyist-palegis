@@ -5,6 +5,7 @@ namespace WiserWebSolutions\LaravelPalegis\Tests\Support;
 use Illuminate\Support\Facades\Cache;
 use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCache;
 use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCacheMiss;
+use WiserWebSolutions\LaravelPalegis\Support\BillHistoryFetcher;
 use WiserWebSolutions\LaravelPalegis\Tests\TestCase;
 
 class BillHistoryCacheTest extends TestCase
@@ -15,7 +16,7 @@ class BillHistoryCacheTest extends TestCase
     }
 
     /**
-     * Mirrors the shape {@see \WiserWebSolutions\LaravelPalegis\Support\BillHistoryFetcher::fetchStream()}
+     * Mirrors the shape {@see BillHistoryFetcher::fetchStream()}
      * hands to {@see BillHistoryCache::put()}: an iterable of bills whose
      * export_date/total are recovered via Generator::getReturn().
      *
