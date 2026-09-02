@@ -9,6 +9,8 @@ use WiserWebSolutions\Lobbyist\Contracts\Providers\BillLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillTextHistoryLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillTextLookup;
+use WiserWebSolutions\Lobbyist\Contracts\Providers\CommitteeAssignmentProvider;
+use WiserWebSolutions\Lobbyist\Contracts\Providers\CommitteeScheduleProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\LegislatorProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\SessionProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\VoteProvider;
@@ -16,6 +18,8 @@ use WiserWebSolutions\Lobbyist\Data\Bill;
 use WiserWebSolutions\Lobbyist\Data\BillCollection;
 use WiserWebSolutions\Lobbyist\Data\BillText;
 use WiserWebSolutions\Lobbyist\Data\BillTextCollection;
+use WiserWebSolutions\Lobbyist\Data\CommitteeAssignmentCollection;
+use WiserWebSolutions\Lobbyist\Data\CommitteeMeetingCollection;
 use WiserWebSolutions\Lobbyist\Data\LegislatorCollection;
 use WiserWebSolutions\Lobbyist\Data\SessionCollection;
 use WiserWebSolutions\Lobbyist\Data\VoteCollection;
@@ -59,6 +63,8 @@ class PalegisDriver extends AbstractDriver implements
     SessionProvider,
     VoteProvider,
     BillTextLookup,
+    CommitteeAssignmentProvider,
+    CommitteeScheduleProvider,
     BillTextHistoryLookup
 {
     /** @var array<string, Chamber> */
@@ -129,6 +135,51 @@ class PalegisDriver extends AbstractDriver implements
         }
 
         return new VoteCollection($votes);
+    }
+
+    /**
+     * Committee rosters and leadership for both chambers.
+     *
+     * The one thing this source has that the bill aggregators do not: an
+     * actual roster, with who chairs each committee.
+     */
+    public function committeeAssignments(): CommitteeAssignmentCollection
+    {
+        $assignments = new CommitteeAssignmentCollection;
+
+        foreach (self::CHAMBERS as $chamber => $enum) {
+            $feed = $chamber === 'house'
+                ? $this->client->getHouseCommitteeAssignments()
+                : $this->client->getSenateCommitteeAssignments();
+
+            foreach ($feed['items'] ?? [] as $item) {
+                foreach (PalegisMapper::committeeAssignments($item, $enum) as $assignment) {
+                    $assignments->push($assignment);
+                }
+            }
+        }
+
+        return $assignments;
+    }
+
+    /**
+     * Scheduled public committee meetings for both chambers.
+     */
+    public function committeeMeetings(): CommitteeMeetingCollection
+    {
+        $meetings = new CommitteeMeetingCollection;
+
+        foreach (self::CHAMBERS as $chamber => $enum) {
+            $feed = $chamber === 'house'
+                ? $this->client->getHouseCommitteeSchedule()
+                : $this->client->getSenateCommitteeSchedule();
+
+            foreach ($feed['items'] ?? [] as $item) {
+                $meetings->push(PalegisMapper::committeeMeeting($item, $enum));
+            }
+        }
+
+        return $meetings;
     }
 
     public function legislators(): LegislatorCollection

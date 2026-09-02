@@ -4,6 +4,8 @@ namespace WiserWebSolutions\LaravelPalegis\Support;
 
 use WiserWebSolutions\Lobbyist\Data\Bill;
 use WiserWebSolutions\Lobbyist\Data\BillText;
+use WiserWebSolutions\Lobbyist\Data\CommitteeAssignment;
+use WiserWebSolutions\Lobbyist\Data\CommitteeMeeting;
 use WiserWebSolutions\Lobbyist\Data\BillTextCollection;
 use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\Session;
@@ -144,14 +146,165 @@ class PalegisMapper
     public static function legislator(array $item, Chamber $chamber): Legislator
     {
         return new Legislator(meta: [
-            'id' => $item['guid'] ?? $item['link'] ?? ($item['title'] ?? ''),
+            // The member id from the bio link, which is the only stable
+            // identity in the feed -- the guid embeds a timestamp and changes
+            // every time the member updates their page.
+            'id' => self::memberId($item['link'] ?? '') ?? ($item['guid'] ?? ''),
             'name' => $item['title'] ?? '',
             'chamber' => $chamber,
             'role' => $item['description'] ?? null,
+            'party' => self::extension($item, 'Party'),
+            'district' => self::extension($item, 'District'),
+            'county' => self::extension($item, 'County'),
+            'image_url' => self::extension($item, 'ImageSrc'),
+            'capitol_phone' => self::extension($item, 'CapitolAddress_Phone'),
+            'district_phone' => self::extension($item, 'District_1_Phone'),
+            'active' => self::extension($item, 'Vacant') === 'true' ? false : true,
             'state' => StateEnum::PA,
             'url' => $item['link'] ?? '',
             'raw' => $item,
         ]);
+    }
+
+    /**
+     * Every committee seat one member holds, from the assignments feed.
+     *
+     * The feed is member-major: one item per legislator, listing their
+     * committees, with leadership in a `position` attribute. So a single item
+     * yields several assignments.
+     *
+     * @param  array<string, mixed>  $item
+     * @return array<int, CommitteeAssignment>
+     */
+    public static function committeeAssignments(array $item, Chamber $chamber): array
+    {
+        // "Abney, Aerion (D) District 19" -- name, party and district in one
+        // string, and the party is nowhere else in this feed.
+        preg_match('/^(?<name>.*?)(?:\s*\((?<party>[A-Z])\))?(?:\s*District\s*(?<district>[0-9]+))?$/', trim((string) ($item['title'] ?? '')), $matches);
+
+        $name = trim($matches['name'] ?? '');
+        $party = $matches['party'] ?? null;
+        $district = $matches['district'] ?? self::extension($item, 'District');
+        $legislatorId = self::memberId($item['link'] ?? '');
+
+        $assignments = [];
+
+        foreach (['Committee' => null, 'Subcommittee' => 'committee'] as $element => $parentAttribute) {
+            foreach (self::extensionEntries($item, $element) as $entry) {
+                if ($entry['value'] === '') {
+                    continue;
+                }
+
+                $assignments[] = new CommitteeAssignment(meta: [
+                    'committee' => $entry['value'],
+                    'chamber' => $chamber,
+                    'legislator_id' => $legislatorId,
+                    'legislator_name' => $name,
+                    'district' => $district,
+                    'party' => $party,
+                    'position' => $entry['attributes']['position'] ?? null,
+                    'parent_committee' => $parentAttribute === null
+                        ? null
+                        : ($entry['attributes'][$parentAttribute] ?? null),
+                    'raw' => $entry,
+                ]);
+            }
+        }
+
+        return $assignments;
+    }
+
+    /**
+     * One scheduled committee meeting.
+     *
+     * @param  array<string, mixed>  $item
+     */
+    public static function committeeMeeting(array $item, Chamber $chamber): CommitteeMeeting
+    {
+        $committee = self::extension($item, 'Committee') ?? '';
+
+        return new CommitteeMeeting(meta: [
+            // The feed prefixes the chamber onto the committee name ("HOUSE
+            // EDUCATION") and shouts it. Stripped and title-cased, because a
+            // caller matching against its own committee list should not have to
+            // undo the feed's formatting.
+            'committee' => self::normaliseCommitteeName($committee, $chamber),
+            'chamber' => $chamber,
+            'date' => self::extension($item, 'MeetingDate'),
+            'time' => self::extension($item, 'MeetingTime'),
+            'location' => self::extension($item, 'Location'),
+            'description' => $item['description'] ?? null,
+            // The guid carries date, time and committee, which is exactly the
+            // identity of the event.
+            'identifier' => (string) ($item['guid'] ?? ''),
+            'url' => $item['link'] ?? '',
+            'bills' => self::billNumbersFrom(self::extension($item, 'Bills') ?? ''),
+            'raw' => $item,
+        ]);
+    }
+
+    /**
+     * Strip the chamber prefix the schedule feed adds, and drop the shouting.
+     */
+    private static function normaliseCommitteeName(string $committee, Chamber $chamber): string
+    {
+        $committee = trim(preg_replace('/^(house|senate)\s+/i', '', trim($committee)) ?? '');
+
+        // Only re-case names that arrived in full capitals; a feed that already
+        // wrote "Game & Fisheries" should keep it.
+        if ($committee !== '' && $committee === mb_strtoupper($committee)) {
+            $committee = mb_convert_case(mb_strtolower($committee), MB_CASE_TITLE, 'UTF-8');
+        }
+
+        return $committee;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private static function billNumbersFrom(string $value): array
+    {
+        preg_match_all('/\b([HS][BR]\s*[0-9]+)\b/i', $value, $matches);
+
+        return array_map(
+            fn (string $bill): string => strtoupper((string) preg_replace('/\s+/', '', $bill)),
+            $matches[1] ?? []
+        );
+    }
+
+    /**
+     * The member id out of a bio link.
+     */
+    private static function memberId(string $link): ?string
+    {
+        preg_match('/memberId=([0-9]+)/i', $link, $matches);
+
+        return $matches[1] ?? null;
+    }
+
+    /**
+     * The first value of a namespaced feed element.
+     *
+     * @param  array<string, mixed>  $item
+     */
+    private static function extension(array $item, string $name): ?string
+    {
+        $value = self::extensionEntries($item, $name)[0]['value'] ?? null;
+
+        return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /**
+     * Every value of a namespaced feed element, with its attributes.
+     *
+     * @param  array<string, mixed>  $item
+     * @return array<int, array{value: string, attributes: array<string, string>}>
+     */
+    private static function extensionEntries(array $item, string $name): array
+    {
+        $entries = $item['extensions'][$name] ?? [];
+
+        return is_array($entries) ? $entries : [];
     }
 
     /**

@@ -168,6 +168,7 @@ class LaravelPalegis
                 'pub_date' => (string) $item->pubDate,
                 'guid' => (string) $item->guid,
                 'categories' => [],
+                'extensions' => $this->parseExtensions($item),
             ];
 
             // Parse item categories
@@ -179,6 +180,47 @@ class LaravelPalegis
         }
 
         return $result;
+    }
+
+    /**
+     * Capture the feed's own namespaced elements, values and attributes alike.
+     *
+     * Everything that makes these feeds worth reading lives here rather than in
+     * standard RSS: a committee assignment's leadership position is an
+     * attribute (`<parss:Committee position="Chair">`), a member's photograph
+     * is `<parss:ImageSrc>`, and a meeting's date and room are their own
+     * elements. Reading only title/link/description throws all of it away.
+     *
+     * Elements repeat -- a member sits on six committees -- so every name maps
+     * to a list, and attributes are kept alongside each value because the
+     * position attribute is the whole point of the assignments feed.
+     *
+     * @return array<string, array<int, array{value: string, attributes: array<string, string>}>>
+     */
+    protected function parseExtensions(\SimpleXMLElement $item): array
+    {
+        $extensions = [];
+
+        foreach ($item->getNamespaces(true) as $prefix => $uri) {
+            if ($prefix === '') {
+                continue;
+            }
+
+            foreach ($item->children($uri) as $name => $child) {
+                $attributes = [];
+
+                foreach ($child->attributes() as $attribute => $value) {
+                    $attributes[(string) $attribute] = (string) $value;
+                }
+
+                $extensions[(string) $name][] = [
+                    'value' => trim((string) $child),
+                    'attributes' => $attributes,
+                ];
+            }
+        }
+
+        return $extensions;
     }
 
     // -----------------------------------------------------------------
