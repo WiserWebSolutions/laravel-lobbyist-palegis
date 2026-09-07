@@ -5,6 +5,7 @@ namespace WiserWebSolutions\LaravelPalegis\Support;
 use WiserWebSolutions\Lobbyist\Data\Bill;
 use WiserWebSolutions\Lobbyist\Data\BillText;
 use WiserWebSolutions\Lobbyist\Data\BillTextCollection;
+use WiserWebSolutions\Lobbyist\Data\ChamberSessionDay;
 use WiserWebSolutions\Lobbyist\Data\CommitteeAssignment;
 use WiserWebSolutions\Lobbyist\Data\CommitteeMeeting;
 use WiserWebSolutions\Lobbyist\Data\Legislator;
@@ -240,6 +241,26 @@ class PalegisMapper
             'url' => $item['link'] ?? '',
             'bills' => self::billNumbersFrom(self::extension($item, 'Bills') ?? ''),
             'raw' => $item,
+        ]);
+    }
+
+    /**
+     * One session day, from a row {@see LaravelPalegis::getHouseSessionDays()}/
+     * {@see LaravelPalegis::getSenateSessionDays()} scraped off the chamber's
+     * own `/session?days` page.
+     *
+     * @param  array{date: string, voting_day: bool, url: string}  $row
+     */
+    public static function chamberSessionDay(array $row, Chamber $chamber): ChamberSessionDay
+    {
+        return new ChamberSessionDay(meta: [
+            'chamber' => $chamber,
+            'date' => $row['date'] ?? null,
+            'voting_day' => $row['voting_day'] ?? true,
+            // The date alone identifies the day within a chamber; there is
+            // only ever one session day per chamber per calendar date.
+            'identifier' => $chamber->value.':'.($row['date'] ?? ''),
+            'url' => $row['url'] ?? '',
         ]);
     }
 

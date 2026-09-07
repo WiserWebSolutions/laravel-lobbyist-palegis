@@ -43,6 +43,32 @@ class PalegisMapperTest extends TestCase
         $this->assertSame(StateEnum::PA, $session->state);
     }
 
+    public function test_maps_a_chamber_session_day(): void
+    {
+        $day = PalegisMapper::chamberSessionDay([
+            'date' => '2026-09-28',
+            'voting_day' => true,
+            'url' => 'https://www.palegis.us/senate/session/info?SessDate=09/28/2026',
+        ], Chamber::Senate);
+
+        $this->assertSame(Chamber::Senate, $day->chamber);
+        $this->assertSame('2026-09-28', $day->date?->format('Y-m-d'));
+        $this->assertTrue($day->votingDay);
+        $this->assertSame('senate:2026-09-28', $day->identifier);
+        $this->assertSame('https://www.palegis.us/senate/session/info?SessDate=09/28/2026', $day->url);
+    }
+
+    public function test_a_non_voting_session_day_maps_accordingly(): void
+    {
+        $day = PalegisMapper::chamberSessionDay([
+            'date' => '2026-01-06',
+            'voting_day' => false,
+            'url' => 'https://www.palegis.us/senate/session/info?SessDate=01/06/2026',
+        ], Chamber::Senate);
+
+        $this->assertFalse($day->votingDay);
+    }
+
     private function billRecord(): array
     {
         return [

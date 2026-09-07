@@ -5,10 +5,12 @@ namespace WiserWebSolutions\LaravelPalegis;
 use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
 use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCacheMiss;
 use WiserWebSolutions\LaravelPalegis\Support\PalegisMapper;
+use WiserWebSolutions\LaravelPalegis\Support\SessionDayPageParser;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillTextHistoryLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillTextLookup;
+use WiserWebSolutions\Lobbyist\Contracts\Providers\ChamberSessionScheduleProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\CommitteeAssignmentProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\CommitteeScheduleProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\LegislatorProvider;
@@ -18,6 +20,7 @@ use WiserWebSolutions\Lobbyist\Data\Bill;
 use WiserWebSolutions\Lobbyist\Data\BillCollection;
 use WiserWebSolutions\Lobbyist\Data\BillText;
 use WiserWebSolutions\Lobbyist\Data\BillTextCollection;
+use WiserWebSolutions\Lobbyist\Data\ChamberSessionDayCollection;
 use WiserWebSolutions\Lobbyist\Data\CommitteeAssignmentCollection;
 use WiserWebSolutions\Lobbyist\Data\CommitteeMeetingCollection;
 use WiserWebSolutions\Lobbyist\Data\LegislatorCollection;
@@ -39,9 +42,14 @@ use WiserWebSolutions\Lobbyist\Support\AbstractDriver;
  * {@see UnsupportedOperationException}
  * via {@see AbstractDriver}. {@see legislators()} merges the House and Senate
  * members feeds; {@see representatives()}/{@see senators()} are that same list
- * filtered by chamber. Feeds without a core-DTO mapping (calendars,
- * journals, amendments, memos, …) are available on the underlying
- * {@see LaravelPalegis} client.
+ * filtered by chamber. Feeds without a core-DTO mapping (bill floor
+ * calendars, journals, amendments, memos, …) are available on the
+ * underlying {@see LaravelPalegis} client.
+ *
+ * {@see chamberSessionDays()} is the one thing here not read from an RSS feed
+ * at all — palegis.us publishes no feed of when a chamber itself convenes,
+ * only an HTML page listing every session day of the current session (see
+ * {@see SessionDayPageParser}).
  *
  * Bill text history is each bill's printer-number history from the Bill
  * History export — every printer's number is one revision of the bill's text.
@@ -56,7 +64,7 @@ use WiserWebSolutions\Lobbyist\Support\AbstractDriver;
  * {@see BillText::$content} (`Bill::text()`'s own `toString()` throws instead,
  * since it never performs I/O on its own).
  */
-class PalegisDriver extends AbstractDriver implements BillLookup, BillProvider, BillTextHistoryLookup, BillTextLookup, CommitteeAssignmentProvider, CommitteeScheduleProvider, LegislatorProvider, SessionProvider, VoteProvider
+class PalegisDriver extends AbstractDriver implements BillLookup, BillProvider, BillTextHistoryLookup, BillTextLookup, ChamberSessionScheduleProvider, CommitteeAssignmentProvider, CommitteeScheduleProvider, LegislatorProvider, SessionProvider, VoteProvider
 {
     /** @var array<string, Chamber> */
     private const CHAMBERS = [
@@ -171,6 +179,29 @@ class PalegisDriver extends AbstractDriver implements BillLookup, BillProvider, 
         }
 
         return $meetings;
+    }
+
+    /**
+     * The session-day calendar for both chambers -- when the House and
+     * Senate themselves convene, not when a committee meets ({@see committeeMeetings()})
+     * or which bills are next on a chamber's floor calendar (unmapped; see
+     * the class docblock).
+     */
+    public function chamberSessionDays(): ChamberSessionDayCollection
+    {
+        $days = new ChamberSessionDayCollection;
+
+        foreach (self::CHAMBERS as $chamber => $enum) {
+            $rows = $chamber === 'house'
+                ? $this->client->getHouseSessionDays()
+                : $this->client->getSenateSessionDays();
+
+            foreach ($rows as $row) {
+                $days->push(PalegisMapper::chamberSessionDay($row, $enum));
+            }
+        }
+
+        return $days;
     }
 
     public function legislators(): LegislatorCollection

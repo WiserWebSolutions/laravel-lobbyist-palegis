@@ -41,6 +41,7 @@ class RegistrationTest extends TestCase
         // aggregator publishes.
         $this->assertTrue($driver->supports(Capability::ListCommitteeAssignments));
         $this->assertTrue($driver->supports(Capability::ListCommitteeMeetings));
+        $this->assertTrue($driver->supports(Capability::ListChamberSessionDays));
         $this->assertFalse($driver->supports(Capability::GetVote));
         $this->assertFalse($driver->supports(Capability::GetRepresentative));
 

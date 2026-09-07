@@ -51,6 +51,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Session-Day Pages
+    |--------------------------------------------------------------------------
+    |
+    | Unlike everything above, this is not an RSS feed -- palegis.us publishes
+    | no feed of when a chamber itself is (or was) in session, only this HTML
+    | page listing every session day of the current two-year session. Scraped
+    | rather than a stable, versioned contract: a redesign of this page breaks
+    | the sync silently (a parse that finds nothing), unlike a malformed RSS
+    | response, which fails loudly. See Support\SessionDayPageParser.
+    |
+    */
+    'pages' => [
+        'house' => [
+            'session-days' => 'https://www.palegis.us/house/session?days',
+        ],
+        'senate' => [
+            'session-days' => 'https://www.palegis.us/senate/session?days',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Request Settings
     |--------------------------------------------------------------------------
     */

@@ -9,6 +9,7 @@ use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCache;
 use WiserWebSolutions\LaravelPalegis\Support\BillHistoryFetcher;
 use WiserWebSolutions\LaravelPalegis\Support\BillIdentifier;
 use WiserWebSolutions\LaravelPalegis\Support\Concerns\FetchesHttp;
+use WiserWebSolutions\LaravelPalegis\Support\SessionDayPageParser;
 use WiserWebSolutions\Lobbyist\Data\BillText;
 
 class LaravelPalegis
@@ -19,6 +20,12 @@ class LaravelPalegis
      * RSS endpoints configuration.
      */
     protected array $endpoints;
+
+    /**
+     * Scraped-HTML page configuration -- see config/palegis.php's "Session-Day
+     * Pages" section for why these are kept separate from the RSS endpoints.
+     */
+    protected array $pages;
 
     /**
      * Request configuration settings.
@@ -53,6 +60,7 @@ class LaravelPalegis
     public function __construct()
     {
         $this->endpoints = Config::get('palegis.endpoints', []);
+        $this->pages = Config::get('palegis.pages', []);
         $this->request = Config::get('palegis.request', []);
         $this->cache = Config::get('palegis.cache', []);
         $this->data = Config::get('palegis.data', []);
@@ -371,6 +379,58 @@ class LaravelPalegis
     public function getAllEndpoints(): array
     {
         return $this->endpoints;
+    }
+
+    // -----------------------------------------------------------------
+    // Session-day pages (scraped, not RSS -- see config/palegis.php)
+    // -----------------------------------------------------------------
+
+    /**
+     * Every session day of the current two-year session for the House,
+     * scraped from its `/session?days` page.
+     *
+     * @return list<array{date: string, voting_day: bool, url: string}>
+     *
+     * @throws PalegisException When the request fails, or the page no longer
+     *                          matches the markup {@see SessionDayPageParser} expects.
+     */
+    public function getHouseSessionDays(?int $ttl = null): array
+    {
+        return $this->fetchSessionDayPage('house', $ttl);
+    }
+
+    /**
+     * Every session day of the current two-year session for the Senate,
+     * scraped from its `/session?days` page.
+     *
+     * @return list<array{date: string, voting_day: bool, url: string}>
+     *
+     * @throws PalegisException When the request fails, or the page no longer
+     *                          matches the markup {@see SessionDayPageParser} expects.
+     */
+    public function getSenateSessionDays(?int $ttl = null): array
+    {
+        return $this->fetchSessionDayPage('senate', $ttl);
+    }
+
+    /**
+     * @return list<array{date: string, voting_day: bool, url: string}>
+     *
+     * @throws PalegisException
+     */
+    protected function fetchSessionDayPage(string $chamber, ?int $ttl = null): array
+    {
+        $url = $this->pages[$chamber]['session-days'] ?? null;
+
+        if ($url === null) {
+            throw new PalegisException("No session-day page configured for chamber '{$chamber}'");
+        }
+
+        return $this->remember(
+            'session-days:'.$url,
+            fn () => SessionDayPageParser::parse($this->fetchBody($url)),
+            $ttl
+        );
     }
 
     // -----------------------------------------------------------------
