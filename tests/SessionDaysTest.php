@@ -19,7 +19,7 @@ class SessionDaysTest extends TestCase
     {
         $buttons = implode('', array_map(
             fn (array $day): string => sprintf(
-                '<a class="dateBtn btn btn-info" href="/senate/session/info?SessDate=%s">%s</a>',
+                '<a class="dateBtn btn btn-info" href="/senate/session/info?SessDate=%1$s" aria-label="link for %1$s">%2$s</a>',
                 $day['date'],
                 ($day['nonVoting'] ?? false) ? '6 NV' : '6',
             ),
