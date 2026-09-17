@@ -5,6 +5,7 @@ namespace WiserWebSolutions\LaravelPalegis\Tests;
 use WiserWebSolutions\LaravelPalegis\Support\PalegisMapper;
 use WiserWebSolutions\Lobbyist\Data\BillText;
 use WiserWebSolutions\Lobbyist\Enums\Chamber;
+use WiserWebSolutions\Lobbyist\Enums\SponsorType;
 use WiserWebSolutions\Lobbyist\Enums\StateEnum;
 use WiserWebSolutions\Lobbyist\Exceptions\LobbyistException;
 
@@ -34,6 +35,45 @@ class PalegisMapperTest extends TestCase
         $this->assertSame('Rep. Jane Doe', $legislator->name);
         $this->assertSame(Chamber::House, $legislator->chamber);
         $this->assertSame(StateEnum::PA, $legislator->state);
+    }
+
+    public function test_maps_legislator_from_members_page(): void
+    {
+        $legislator = PalegisMapper::legislatorFromMembersPage([
+            'id' => '209',
+            'name' => 'William F. Adolph',
+            'party' => 'R',
+            'district' => '165',
+            'county' => 'DELAWARE',
+            'leadership' => 'Minority Whip',
+            'image_url' => 'https://www.palegis.us/resources/images/members/200/209.jpg',
+            'url' => 'https://www.palegis.us/house/members/bio/209/rep-adolph',
+        ], Chamber::House);
+
+        $this->assertSame('209', $legislator->id);
+        $this->assertSame('William F. Adolph', $legislator->name);
+        $this->assertSame(Chamber::House, $legislator->chamber);
+        $this->assertSame(StateEnum::PA, $legislator->state);
+        $this->assertSame('DELAWARE', $legislator->county);
+        $this->assertSame('Minority Whip', $legislator->role);
+        $this->assertSame('https://www.palegis.us/resources/images/members/200/209.jpg', $legislator->imageUrl);
+        $this->assertTrue($legislator->active);
+    }
+
+    public function test_maps_legislator_from_members_page_with_no_leadership_title(): void
+    {
+        $legislator = PalegisMapper::legislatorFromMembersPage([
+            'id' => '209',
+            'name' => 'William F. Adolph',
+            'party' => 'R',
+            'district' => '165',
+            'county' => 'DELAWARE',
+            'leadership' => '',
+            'image_url' => 'https://www.palegis.us/resources/images/members/200/209.jpg',
+            'url' => 'https://www.palegis.us/house/members/bio/209/rep-adolph',
+        ], Chamber::House);
+
+        $this->assertNull($legislator->role);
     }
 
     public function test_current_session_is_pennsylvania(): void
@@ -76,6 +116,8 @@ class PalegisMapperTest extends TestCase
             'designator' => 'HB17',
             'short_title' => 'Cursive handwriting',
             'body' => 'H',
+            'last_update' => 'May 13, 2026 12:05:00 PM EDT',
+            'cosponsorship_memo' => ['text' => '', 'url' => ''],
             'sponsors' => [
                 ['name' => 'WATRO', 'party' => 'R', 'body' => 'H', 'district' => '116', 'sequence' => '01'],
             ],
@@ -83,8 +125,8 @@ class PalegisMapperTest extends TestCase
                 ['sequence' => '01', 'number' => '0002', 'pdf_url' => 'https://www.palegis.us/legislation/bills/text/PDF/2025/0/HB0017/PN0002'],
             ],
             'actions' => [
-                ['sequence' => '01', 'full_action' => 'Referred to EDUCATION', 'date' => '01/08/25'],
-                ['sequence' => '02', 'full_action' => 'Reported as committed', 'date' => '03/12/25'],
+                ['sequence' => '01', 'verb' => 'Referred to', 'committee' => 'EDUCATION', 'chamber' => 'H', 'full_action' => 'Referred to EDUCATION', 'date' => '01/08/25'],
+                ['sequence' => '02', 'verb' => 'Reported as committed,', 'committee' => 'EDUCATION', 'chamber' => 'H', 'full_action' => 'Reported as committed', 'date' => '03/12/25'],
             ],
         ];
     }
@@ -179,5 +221,94 @@ class PalegisMapperTest extends TestCase
 
         $this->assertCount(1, $history);
         $this->assertNull($history->first()->date);
+    }
+
+    public function test_bill_from_history_derives_status_from_its_action_history(): void
+    {
+        $bill = PalegisMapper::billFromHistory($this->billRecord());
+
+        // The fixture's last recognized action is "Reported as committed,".
+        $this->assertSame('reported_favourably', $bill->status);
+        $this->assertSame('03/12/25', $bill->statusDate?->format('m/d/y'));
+    }
+
+    public function test_bill_from_history_uses_last_update_as_the_change_hash(): void
+    {
+        $bill = PalegisMapper::billFromHistory($this->billRecord());
+
+        $this->assertSame('May 13, 2026 12:05:00 PM EDT', $bill->changeHash);
+    }
+
+    public function test_bill_from_history_falls_back_to_the_short_title_with_no_cosponsorship_memo(): void
+    {
+        $bill = PalegisMapper::billFromHistory($this->billRecord());
+
+        $this->assertSame('Cursive handwriting', $bill->description);
+    }
+
+    public function test_bill_from_history_prefers_the_cosponsorship_memo_as_description(): void
+    {
+        $record = $this->billRecord();
+        $record['cosponsorship_memo'] = ['text' => 'Mandating Cursive Handwriting', 'url' => 'https://example.test'];
+
+        $bill = PalegisMapper::billFromHistory($record);
+
+        $this->assertSame('Mandating Cursive Handwriting', $bill->description);
+    }
+
+    public function test_bill_from_history_includes_derived_referrals_in_the_raw_meta(): void
+    {
+        $bill = PalegisMapper::billFromHistory($this->billRecord());
+
+        $this->assertArrayHasKey('referrals', $bill->meta['raw']);
+        $this->assertCount(1, $bill->meta['raw']['referrals']);
+        $this->assertSame('H:EDUCATION', $bill->meta['raw']['referrals'][0]['committee_id']);
+    }
+
+    public function test_bill_summary_from_history_omits_referrals_but_still_has_status(): void
+    {
+        $bill = PalegisMapper::billSummaryFromHistory($this->billRecord());
+
+        $this->assertArrayNotHasKey('raw', $bill->meta);
+        $this->assertSame('reported_favourably', $bill->status);
+    }
+
+    public function test_sponsors_resolve_to_a_legislator_id_via_the_roster_index(): void
+    {
+        $bill = PalegisMapper::billFromHistory($this->billRecord(), rosterIndex: ['house|116' => '2029']);
+
+        $sponsors = $bill->sponsors();
+
+        $this->assertCount(1, $sponsors);
+        $this->assertSame('2029', $sponsors->first()->id);
+        $this->assertSame(SponsorType::Primary, $sponsors->first()->meta['sponsor_type']);
+        $this->assertSame(1, $sponsors->first()->meta['sponsor_order']);
+    }
+
+    public function test_a_sponsor_absent_from_the_roster_index_maps_with_an_empty_id(): void
+    {
+        $bill = PalegisMapper::billFromHistory($this->billRecord());
+
+        $this->assertSame('', $bill->sponsors()->first()->id);
+    }
+
+    public function test_a_cosponsor_is_marked_co_sponsor_not_primary(): void
+    {
+        $record = $this->billRecord();
+        $record['sponsors'][] = ['name' => 'NEILSON', 'party' => 'D', 'body' => 'H', 'district' => '174', 'sequence' => '02'];
+
+        $bill = PalegisMapper::billFromHistory($record);
+        $sponsors = $bill->sponsors();
+
+        $this->assertSame(SponsorType::Primary, $sponsors->first()->meta['sponsor_type']);
+        $this->assertSame(SponsorType::CoSponsor, $sponsors->last()->meta['sponsor_type']);
+    }
+
+    public function test_roster_key_normalizes_a_chamber_enum_and_a_zero_padded_district_the_same_as_a_letter_and_a_bare_number(): void
+    {
+        $this->assertSame(
+            PalegisMapper::rosterKey(Chamber::House, '019'),
+            PalegisMapper::rosterKey('H', '19'),
+        );
     }
 }

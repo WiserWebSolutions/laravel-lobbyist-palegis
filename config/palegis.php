@@ -51,24 +51,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Session-Day Pages
+    | Scraped HTML Pages
     |--------------------------------------------------------------------------
     |
-    | Unlike everything above, this is not an RSS feed -- palegis.us publishes
-    | no feed of when a chamber itself is (or was) in session, only this HTML
-    | page listing every session day of the current two-year session. Scraped
-    | rather than a stable, versioned contract: a redesign of this page breaks
-    | the sync silently (a parse that finds nothing), unlike a malformed RSS
-    | response, which fails loudly. See Support\SessionDayPageParser.
+    | Unlike everything above, these are not RSS feeds. "session-days" lists
+    | every session day of the current two-year session (palegis.us publishes
+    | no feed of when a chamber itself is/was in session) -- see
+    | Support\SessionDayPageParser. "members" is the member roster page,
+    | which -- unlike the current-roster-only Members RSS feed -- also
+    | answers to `?SessYr=YYYY` for a past General Assembly's roster -- see
+    | Support\MembersPageParser. Both are scraped rather than a stable,
+    | versioned contract: a redesign of either page breaks the sync silently
+    | (a parse that finds nothing), unlike a malformed RSS response, which
+    | fails loudly.
     |
     */
     'pages' => [
         'house' => [
             'session-days' => 'https://www.palegis.us/house/session?days',
+            'members' => 'https://www.palegis.us/house/members',
         ],
         'senate' => [
             'session-days' => 'https://www.palegis.us/senate/session?days',
+            'members' => 'https://www.palegis.us/senate/members',
         ],
+        'data' => 'https://www.palegis.us/data',
     ],
 
     /*

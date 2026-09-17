@@ -9,6 +9,8 @@ use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCache;
 use WiserWebSolutions\LaravelPalegis\Support\BillHistoryFetcher;
 use WiserWebSolutions\LaravelPalegis\Support\BillIdentifier;
 use WiserWebSolutions\LaravelPalegis\Support\Concerns\FetchesHttp;
+use WiserWebSolutions\LaravelPalegis\Support\DataPageParser;
+use WiserWebSolutions\LaravelPalegis\Support\MembersPageParser;
 use WiserWebSolutions\LaravelPalegis\Support\SessionDayPageParser;
 use WiserWebSolutions\Lobbyist\Data\BillText;
 
@@ -429,6 +431,108 @@ class LaravelPalegis
         return $this->remember(
             'session-days:'.$url,
             fn () => SessionDayPageParser::parse($this->fetchBody($url)),
+            $ttl
+        );
+    }
+
+    /**
+     * The House member roster for a session, scraped from its `/members` page.
+     *
+     * @param  string|null  $session  palegis session id (e.g. "2007_0"); null
+     *                                gets the current roster (same people as
+     *                                {@see getHouseMembers()}, just from the
+     *                                HTML page instead of the RSS feed).
+     * @return list<array{id: string, name: string, party: string, district: string, county: string, leadership: string, image_url: string, url: string}>
+     *
+     * @throws PalegisException When the request fails, or the page no longer
+     *                          matches the markup {@see MembersPageParser} expects.
+     */
+    public function getHouseMembersForSession(?string $session = null, ?int $ttl = null): array
+    {
+        return $this->fetchMembersPage('house', $session, $ttl);
+    }
+
+    /**
+     * The Senate member roster for a session, scraped from its `/members` page.
+     *
+     * @param  string|null  $session  palegis session id (e.g. "2007_0"); null
+     *                                gets the current roster (same people as
+     *                                {@see getSenateMembers()}, just from the
+     *                                HTML page instead of the RSS feed).
+     * @return list<array{id: string, name: string, party: string, district: string, county: string, leadership: string, image_url: string, url: string}>
+     *
+     * @throws PalegisException When the request fails, or the page no longer
+     *                          matches the markup {@see MembersPageParser} expects.
+     */
+    public function getSenateMembersForSession(?string $session = null, ?int $ttl = null): array
+    {
+        return $this->fetchMembersPage('senate', $session, $ttl);
+    }
+
+    /**
+     * @return list<array{id: string, name: string, party: string, district: string, county: string, leadership: string, image_url: string, url: string}>
+     *
+     * @throws PalegisException
+     */
+    protected function fetchMembersPage(string $chamber, ?string $session, ?int $ttl): array
+    {
+        $url = $this->pages[$chamber]['members'] ?? null;
+
+        if ($url === null) {
+            throw new PalegisException("No members page configured for chamber '{$chamber}'");
+        }
+
+        $sessYr = self::sessYrFromSession($session);
+
+        if ($sessYr !== null) {
+            $url .= '?SessYr='.urlencode($sessYr);
+        }
+
+        return $this->remember(
+            'members-page:'.$url,
+            fn () => MembersPageParser::parse($this->fetchBody($url)),
+            $ttl
+        );
+    }
+
+    /**
+     * palegis session ids are "{start year}_0" (e.g. "2007_0" for the
+     * 2007-2008 session, matching {@see currentSession()}); the member
+     * roster page instead takes that start year alone as `?SessYr=`.
+     */
+    private static function sessYrFromSession(?string $session): ?string
+    {
+        if ($session === null) {
+            return null;
+        }
+
+        [$year] = explode('_', $session, 2);
+
+        return $year;
+    }
+
+    /**
+     * Every Bill History Data session published at `https://www.palegis.us/data`,
+     * back to 1969, each with the export's own rebuild timestamp -- the
+     * revision marker for that whole session archive (see
+     * {@see PalegisMapper::billFromHistory()} for the per-bill equivalent).
+     *
+     * @return list<array{session: string, name: string, year_start: ?int, year_end: ?int, last_updated: ?string}>
+     *
+     * @throws PalegisException When the request fails, or the page no longer
+     *                          matches the markup {@see DataPageParser} expects.
+     */
+    public function getBillHistorySessions(?int $ttl = null): array
+    {
+        $url = $this->pages['data'] ?? null;
+
+        if ($url === null) {
+            throw new PalegisException('No data-downloads page configured');
+        }
+
+        return $this->remember(
+            'data-sessions:'.$url,
+            fn () => DataPageParser::parse($this->fetchBody($url)),
             $ttl
         );
     }

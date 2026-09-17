@@ -2,6 +2,7 @@
 
 namespace WiserWebSolutions\LaravelPalegis\Support;
 
+use WiserWebSolutions\LaravelPalegis\LaravelPalegis;
 use WiserWebSolutions\Lobbyist\Data\Bill;
 use WiserWebSolutions\Lobbyist\Data\BillText;
 use WiserWebSolutions\Lobbyist\Data\BillTextCollection;
@@ -12,6 +13,7 @@ use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\Session;
 use WiserWebSolutions\Lobbyist\Data\Vote;
 use WiserWebSolutions\Lobbyist\Enums\Chamber;
+use WiserWebSolutions\Lobbyist\Enums\SponsorType;
 use WiserWebSolutions\Lobbyist\Enums\StateEnum;
 
 /**
@@ -26,50 +28,116 @@ class PalegisMapper
     /**
      * Map a Bill History Data record (see LaravelPalegis::getBillHistory()) to
      * a full-detail Bill for a single-bill lookup, preserving the raw record
-     * (sponsors, full action history, full printer-number history) since
-     * only one record is materialized at a time.
+     * (sponsors, full action history, full printer-number history, plus a
+     * derived `referrals` list -- see {@see ActionStatusMapper::referrals()})
+     * since only one record is materialized at a time.
+     *
+     * @param  array<string, string>  $rosterIndex  Sponsor identity join: maps
+     *                                              {@see rosterKey()} to a member id, so a sponsor entry (which carries
+     *                                              only chamber/party/district, no id) can be resolved to the same
+     *                                              legislator {@see \WiserWebSolutions\LaravelPalegis\PalegisDriver::legislators()}
+     *                                              imports. Omit it (or pass an empty array) when the caller does not
+     *                                              need sponsors resolved to an identity -- every sponsor then maps
+     *                                              with an empty id, which downstream sponsor-sync code already
+     *                                              treats as "no matching legislator" and skips.
      */
-    public static function billFromHistory(array $record): Bill
+    public static function billFromHistory(array $record, array $rosterIndex = []): Bill
     {
-        return self::billDto($record, includeRaw: true);
+        return self::billDto($record, includeRaw: true, rosterIndex: $rosterIndex);
     }
 
     /**
      * Map a Bill History Data record to a lightweight-summary Bill, for
      * listing every bill in a session at once. Omits the raw record
-     * (sponsors, complete action history, complete printer-number history)
+     * (complete action history, complete printer-number history)
      * — a session can hold thousands of bills, and retaining full detail on
      * every one of them when only the summary fields are needed is the
      * majority of the memory cost of listing them all.
+     *
+     * @param  array<string, string>  $rosterIndex  See {@see billFromHistory()}.
      */
-    public static function billSummaryFromHistory(array $record): Bill
+    public static function billSummaryFromHistory(array $record, array $rosterIndex = []): Bill
     {
-        return self::billDto($record, includeRaw: false);
+        return self::billDto($record, includeRaw: false, rosterIndex: $rosterIndex);
     }
 
-    private static function billDto(array $record, bool $includeRaw): Bill
+    private static function billDto(array $record, bool $includeRaw, array $rosterIndex = []): Bill
     {
         $lastAction = ! empty($record['actions']) ? end($record['actions']) : null;
         $lastPrinters = ! empty($record['printers_numbers']) ? end($record['printers_numbers']) : null;
+
+        ['status' => $status, 'status_date' => $statusDate] = ActionStatusMapper::status($record['actions'] ?? []);
+
+        $memo = trim((string) ($record['cosponsorship_memo']['text'] ?? ''));
 
         $meta = [
             'id' => $record['id'] ?? '',
             'number' => $record['designator'] ?? '',
             'title' => $record['short_title'] ?? '',
-            'description' => $record['short_title'] ?? '',
+            'description' => $memo !== '' ? $memo : ($record['short_title'] ?? ''),
             'state' => StateEnum::PA,
             'chamber' => Chamber::fromString($record['body'] ?? null),
+            'status' => $status,
+            'status_date' => $statusDate,
             'last_action' => $lastAction['full_action'] ?? '',
             'last_action_date' => $lastAction['date'] ?? null,
             'url' => $lastPrinters['pdf_url'] ?? '',
+            // The export's own per-bill revision marker -- see
+            // {@see \WiserWebSolutions\LaravelPalegis\Support\DataPageParser}'s
+            // docblock for how this differs from the whole archive's own hash.
+            'change_hash' => ($record['last_update'] ?? '') !== '' ? $record['last_update'] : null,
             'texts' => self::billTextHistory($record),
+            'sponsors' => self::sponsors($record['sponsors'] ?? [], $rosterIndex),
         ];
 
         if ($includeRaw) {
-            $meta['raw'] = $record;
+            $meta['raw'] = [...$record, 'referrals' => ActionStatusMapper::referrals($record['actions'] ?? [])];
         }
 
         return new Bill(meta: $meta);
+    }
+
+    /**
+     * Map a Bill History sponsor row (name, party, body, district,
+     * sequence -- no member id) to a {@see Legislator}, resolved to an
+     * identity via {@see $rosterIndex} keyed by {@see rosterKey()}. Sequence
+     * "01" is always the prime sponsor; every other sequence is a co-sponsor
+     * -- the export lists them in that order, and there is no separate joint-
+     * sponsor concept in these feeds.
+     *
+     * @param  array<int, array{name?: string, party?: string, body?: string, district?: string, sequence?: string}>  $sponsors
+     * @param  array<string, string>  $rosterIndex
+     * @return list<Legislator>
+     */
+    private static function sponsors(array $sponsors, array $rosterIndex): array
+    {
+        return array_values(array_map(
+            fn (array $sponsor): Legislator => new Legislator(meta: [
+                'id' => $rosterIndex[self::rosterKey($sponsor['body'] ?? null, $sponsor['district'] ?? null)] ?? '',
+                'name' => trim((string) ($sponsor['name'] ?? '')),
+                'chamber' => Chamber::fromString($sponsor['body'] ?? null),
+                'party' => ($sponsor['party'] ?? '') !== '' ? $sponsor['party'] : null,
+                'district' => ($sponsor['district'] ?? '') !== '' ? $sponsor['district'] : null,
+                'sponsor_type' => ($sponsor['sequence'] ?? '') === '01' ? SponsorType::Primary : SponsorType::CoSponsor,
+                'sponsor_order' => ($sponsor['sequence'] ?? '') !== '' ? (int) $sponsor['sequence'] : null,
+            ]),
+            $sponsors
+        ));
+    }
+
+    /**
+     * A chamber+district key shared between a sponsor row (chamber as
+     * "H"/"S", district as a string, possibly zero-padded) and a roster
+     * built from {@see Legislator} DTOs (chamber as a {@see Chamber} enum),
+     * so both sides normalize to the same key regardless of which shape they
+     * started from.
+     */
+    public static function rosterKey(Chamber|string|null $chamber, ?string $district): string
+    {
+        $chamberValue = $chamber instanceof Chamber ? $chamber->value : Chamber::fromString($chamber)?->value;
+        $number = (int) preg_replace('/[^0-9]/', '', (string) $district);
+
+        return ($chamberValue ?? '').'|'.$number;
     }
 
     /**
@@ -164,6 +232,37 @@ class PalegisMapper
             'state' => StateEnum::PA,
             'url' => $item['link'] ?? '',
             'raw' => $item,
+        ]);
+    }
+
+    /**
+     * Map a member roster row (see {@see LaravelPalegis::getHouseMembersForSession()}/
+     * {@see LaravelPalegis::getSenateMembersForSession()}, scraped by
+     * {@see MembersPageParser}) to a Legislator.
+     *
+     * Distinct from {@see self::legislator()} (the RSS mapping): this source can
+     * reach past sessions the current-roster-only Members feed cannot, but in
+     * exchange doesn't carry every field the feed does (no phone numbers, no
+     * explicit active/vacant flag) -- every row here was, by definition, a
+     * seated member of the session requested.
+     *
+     * @param  array{id: string, name: string, party: string, district: string, county: string, leadership: string, image_url: string, url: string}  $row
+     */
+    public static function legislatorFromMembersPage(array $row, Chamber $chamber): Legislator
+    {
+        return new Legislator(meta: [
+            'id' => $row['id'] ?? '',
+            'name' => $row['name'] ?? '',
+            'chamber' => $chamber,
+            'role' => ($row['leadership'] ?? '') !== '' ? $row['leadership'] : null,
+            'party' => $row['party'] ?? null,
+            'district' => $row['district'] ?? null,
+            'county' => $row['county'] ?? null,
+            'image_url' => $row['image_url'] ?? null,
+            'active' => true,
+            'state' => StateEnum::PA,
+            'url' => $row['url'] ?? '',
+            'raw' => $row,
         ]);
     }
 

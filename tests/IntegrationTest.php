@@ -19,8 +19,11 @@ use WiserWebSolutions\Lobbyist\LobbyistServiceProvider;
  * default. That is the intended contract: it is the state's own source.
  *
  * What the tests pin is the consequence -- it is not a superset of the
- * aggregator, so an application that needs datasets, change hashes or bill
- * text has to ask for the aggregator by name rather than through state().
+ * aggregator. It does support datasets and change hashes now (see
+ * PalegisDriver's class doc), but its dataset carries no votes, and it still
+ * has no per-identifier vote/representative lookup or bill-text-version
+ * lookup, so an application that needs those has to ask for the aggregator
+ * by name rather than through state().
  */
 class IntegrationTest extends Orchestra
 {
@@ -60,12 +63,14 @@ class IntegrationTest extends Orchestra
     {
         $driver = Lobbyist::state('PA');
 
-        // The reason a consuming application cannot simply route everything
-        // through state(): these feeds carry rosters, photos and schedules,
-        // and no datasets, change hashes or bill text at all.
-        $this->assertFalse($driver->supports(Capability::GetDataset));
-        $this->assertFalse($driver->supports(Capability::ListBillChanges));
+        // It now answers datasets and change hashes from the Bill History
+        // export -- but the export carries no per-identifier vote/rep lookup
+        // or bill-text-version lookup, which remain aggregator-only.
+        $this->assertTrue($driver->supports(Capability::GetDataset));
+        $this->assertTrue($driver->supports(Capability::ListBillChanges));
         $this->assertFalse($driver->supports(Capability::GetBillTextVersion));
+        $this->assertFalse($driver->supports(Capability::GetVote));
+        $this->assertFalse($driver->supports(Capability::GetRepresentative));
     }
 
     public function test_the_aggregator_is_still_reachable_by_name(): void

@@ -83,6 +83,90 @@ class PalegisDriverTest extends TestCase
         $this->assertSame('Sen. John Roe', $senators->first()->name);
     }
 
+    /**
+     * A trimmed excerpt of a real `/{chamber}/members?SessYr=YYYY` page: one
+     * member card, mirroring the real markup's whitespace and attribute order.
+     */
+    private function membersPage(string $chamber, string $bioSlugPrefix, string $name, string $lastSlug, string $id): string
+    {
+        return <<<HTML
+        <div class="col-6 col-sm-6 col-lg-3 member mb-4" data-name="{$lastSlug} {$name}" data-county="TEST COUNTY" data-party="D" data-district="001" data-leadership="">
+            <span class="thumb-info shadow-lg bg-white rounded-bottom h-100" style="max-width:200px;">
+                <a href=" /{$chamber}/members/bio/{$id}/{$bioSlugPrefix}-{$lastSlug}" class="thumb-info-wrapper">
+                        <img src="https://www.palegis.us/resources/images/members/200/{$id}.jpg?20260915" class="card-img-top" alt="Photo">
+                        <span class="thumb-info-title">
+                            <span class="thumb-info-inner">{$name}</span>
+                            <span class="thumb-info-type bg-party-D"> Democrat<br>District 1</span>
+                        </span>
+                </a>
+                <div class="thumb-info-caption px-1"></div>
+            </span>
+        </div>
+        HTML;
+    }
+
+    public function test_legislators_for_session_merges_both_chambers(): void
+    {
+        Http::fake([
+            'www.palegis.us/house/members?SessYr=2007' => Http::response(
+                $this->membersPage('house', 'rep', 'Jane Doe', 'doe', '209')
+            ),
+            'www.palegis.us/senate/members?SessYr=2007' => Http::response(
+                $this->membersPage('senate', 'sen', 'John Roe', 'roe', '1187')
+            ),
+        ]);
+
+        $legislators = $this->driver()->setStateContext('PA')->legislatorsForSession('2007_0');
+
+        $this->assertCount(2, $legislators);
+        $this->assertContainsOnlyInstancesOf(Legislator::class, $legislators);
+        $this->assertSame('Jane Doe', $legislators->byChamber(Chamber::House)->first()->name);
+        $this->assertSame('John Roe', $legislators->byChamber(Chamber::Senate)->first()->name);
+        $this->assertSame('209', $legislators->byChamber(Chamber::House)->first()->id);
+        $this->assertSame(
+            'https://www.palegis.us/resources/images/members/200/209.jpg?20260915',
+            $legislators->byChamber(Chamber::House)->first()->imageUrl,
+        );
+    }
+
+    public function test_representatives_and_senators_for_session_are_filtered_by_chamber(): void
+    {
+        Http::fake([
+            'www.palegis.us/house/members?SessYr=2009' => Http::response(
+                $this->membersPage('house', 'rep', 'Jane Doe', 'doe', '209')
+            ),
+            'www.palegis.us/senate/members?SessYr=2009' => Http::response(
+                $this->membersPage('senate', 'sen', 'John Roe', 'roe', '1187')
+            ),
+        ]);
+
+        $driver = $this->driver()->setStateContext('PA');
+
+        $reps = $driver->representativesForSession('2009_0');
+        $this->assertCount(1, $reps);
+        $this->assertSame('Jane Doe', $reps->first()->name);
+
+        $senators = $driver->senatorsForSession('2009_0');
+        $this->assertCount(1, $senators);
+        $this->assertSame('John Roe', $senators->first()->name);
+    }
+
+    public function test_legislators_for_session_without_a_session_gets_the_current_roster(): void
+    {
+        Http::fake([
+            'www.palegis.us/house/members' => Http::response(
+                $this->membersPage('house', 'rep', 'Jane Doe', 'doe', '209')
+            ),
+            'www.palegis.us/senate/members' => Http::response(
+                $this->membersPage('senate', 'sen', 'John Roe', 'roe', '1187')
+            ),
+        ]);
+
+        $legislators = $this->driver()->setStateContext('PA')->legislatorsForSession();
+
+        $this->assertCount(2, $legislators);
+    }
+
     public function test_list_sessions_returns_synthetic_pa_session(): void
     {
         $sessions = $this->driver()->setStateContext('PA')->sessions();

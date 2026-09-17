@@ -36,11 +36,13 @@ class LaravelPalegisServiceProvider extends ServiceProvider
         // deliberate -- it is the state's own source, and an application that
         // installs it is asking for it.
         //
-        // What it is not is a superset. These feeds carry rosters, photos and
-        // schedules; they carry no datasets, change hashes or bill text. An
-        // application that needs those alongside this must ask its aggregator
-        // for them by name rather than through state(), which is what
-        // supports(Capability::…) is for.
+        // What it is not is a superset. This driver now also supports
+        // DatasetProvider/DatasetLookup/BillChangeProvider (see PalegisDriver's
+        // class doc), but its dataset votes() is always empty -- roll-call
+        // votes live only on scraped, per-roll-call HTML pages, not in the
+        // Bill History export. An application that needs those must ask its
+        // aggregator for them by name rather than through state(), which is
+        // what supports(Capability::…) is for.
         $this->app->resolving('lobbyist', function (LobbyistManager $manager) {
             $manager->extend('pa', fn ($app) => new PalegisDriver(
                 $app->make(LaravelPalegis::class)
