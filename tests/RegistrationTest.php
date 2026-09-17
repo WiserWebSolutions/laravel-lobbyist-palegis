@@ -21,6 +21,20 @@ class RegistrationTest extends TestCase
         $this->assertInstanceOf(PalegisDriver::class, Lobbyist::state('PA'));
     }
 
+    public function test_the_driver_is_also_registered_under_a_stable_name(): void
+    {
+        // A second, distinct registration -- so an application asking for
+        // this driver explicitly by name (e.g. as its bills aggregator) is
+        // not making the exact same manager lookup as state('PA'), even
+        // though both construct the same driver class. See
+        // LaravelPalegisServiceProvider::boot()'s docblock for why that
+        // distinction matters to a caller comparing the two.
+        $driver = Lobbyist::driver('palegis');
+
+        $this->assertInstanceOf(PalegisDriver::class, $driver);
+        $this->assertNotSame(Lobbyist::driver('pa'), $driver);
+    }
+
     public function test_driver_honours_contract(): void
     {
         $driver = new PalegisDriver(new LaravelPalegis);
