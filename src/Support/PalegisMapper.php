@@ -370,6 +370,16 @@ class PalegisMapper
             'image_url' => self::extension($item, 'ImageSrc'),
             'capitol_phone' => self::extension($item, 'CapitolAddress_Phone'),
             'district_phone' => self::extension($item, 'District_1_Phone'),
+            'capitol_address' => [
+                'street1' => self::extension($item, 'CapitolAddress_Street1'),
+                'street2' => self::extension($item, 'CapitolAddress_Street2'),
+                'city_state_zip' => self::extension($item, 'CapitolAddress_CityStateZip'),
+            ],
+            'district_address' => [
+                'street1' => self::extension($item, 'District_1_Street1'),
+                'street2' => self::extension($item, 'District_1_Street2'),
+                'city_state_zip' => self::extension($item, 'District_1_CityStateZip'),
+            ],
             'active' => self::extension($item, 'Vacant') === 'true' ? false : true,
             'state' => StateEnum::PA,
             'url' => $item['link'] ?? '',

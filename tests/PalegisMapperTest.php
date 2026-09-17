@@ -174,6 +174,35 @@ class PalegisMapperTest extends TestCase
         $this->assertSame(StateEnum::PA, $legislator->state);
     }
 
+    public function test_maps_legislator_office_addresses(): void
+    {
+        $legislator = PalegisMapper::legislator([
+            'title' => 'Rep. Jane Doe',
+            'link' => 'https://www.palegis.us/member/1',
+            'guid' => 'm1',
+            'extensions' => [
+                'CapitolAddress_Phone' => [['value' => '717-555-0100']],
+                'CapitolAddress_Street1' => [['value' => '1 Capitol Way']],
+                'CapitolAddress_Street2' => [['value' => 'Room 200']],
+                'CapitolAddress_CityStateZip' => [['value' => 'Harrisburg, PA 17120']],
+                'District_1_Phone' => [['value' => '814-555-0100']],
+                'District_1_Street1' => [['value' => '2 Main St']],
+                'District_1_Street2' => [['value' => '']],
+                'District_1_CityStateZip' => [['value' => 'Erie, PA 16501']],
+            ],
+        ], Chamber::House);
+
+        $this->assertSame('717-555-0100', $legislator->capitolPhone);
+        $this->assertSame('1 Capitol Way', $legislator->capitolAddress->street1);
+        $this->assertSame('Room 200', $legislator->capitolAddress->street2);
+        $this->assertSame('Harrisburg, PA 17120', $legislator->capitolAddress->cityStateZip);
+
+        $this->assertSame('814-555-0100', $legislator->districtPhone);
+        $this->assertSame('2 Main St', $legislator->districtAddress->street1);
+        $this->assertNull($legislator->districtAddress->street2);
+        $this->assertSame('Erie, PA 16501', $legislator->districtAddress->cityStateZip);
+    }
+
     public function test_maps_legislator_from_members_page(): void
     {
         $legislator = PalegisMapper::legislatorFromMembersPage([
