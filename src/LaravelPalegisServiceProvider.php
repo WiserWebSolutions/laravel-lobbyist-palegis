@@ -40,9 +40,9 @@ class LaravelPalegisServiceProvider extends ServiceProvider
         //
         // What it is not is a superset. This driver now also supports
         // DatasetProvider/DatasetLookup/BillChangeProvider (see PalegisDriver's
-        // class doc), but its dataset votes() is always empty -- roll-call
-        // votes live only on scraped, per-roll-call HTML pages, not in the
-        // Bill History export. An application that needs those must ask its
+        // class doc), including floor and committee roll-call votes -- but
+        // still no lookup by arbitrary identifier (GetVote, GetRepresentative,
+        // GetBillTextVersion). An application that needs those must ask its
         // aggregator for them by name rather than through state(), which is
         // what supports(Capability::…) is for.
         $this->app->resolving('lobbyist', function (LobbyistManager $manager) {

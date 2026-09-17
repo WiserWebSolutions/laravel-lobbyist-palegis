@@ -8,6 +8,7 @@ use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
 use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCache;
 use WiserWebSolutions\LaravelPalegis\Support\BillHistoryFetcher;
 use WiserWebSolutions\LaravelPalegis\Support\BillIdentifier;
+use WiserWebSolutions\LaravelPalegis\Support\CommitteeListPageParser;
 use WiserWebSolutions\LaravelPalegis\Support\Concerns\FetchesHttp;
 use WiserWebSolutions\LaravelPalegis\Support\DataPageParser;
 use WiserWebSolutions\LaravelPalegis\Support\MembersPageParser;
@@ -491,6 +492,55 @@ class LaravelPalegis
         return $this->remember(
             'members-page:'.$url,
             fn () => MembersPageParser::parse($this->fetchBody($url)),
+            $ttl
+        );
+    }
+
+    /**
+     * The House committee list -- name and numeric code -- scraped from its
+     * `/committees/committee-list` page. The code is what a committee
+     * roll-call vote-summary URL requires; see {@see CommitteeListPageParser}.
+     *
+     * @return list<array{code: string, slug: string, name: string}>
+     *
+     * @throws PalegisException When the request fails, or the page no longer
+     *                          matches the markup {@see CommitteeListPageParser} expects.
+     */
+    public function getHouseCommitteeList(?int $ttl = null): array
+    {
+        return $this->fetchCommitteeListPage('house', $ttl);
+    }
+
+    /**
+     * The Senate committee list -- name and numeric code -- scraped from its
+     * `/committees/committee-list` page.
+     *
+     * @return list<array{code: string, slug: string, name: string}>
+     *
+     * @throws PalegisException When the request fails, or the page no longer
+     *                          matches the markup {@see CommitteeListPageParser} expects.
+     */
+    public function getSenateCommitteeList(?int $ttl = null): array
+    {
+        return $this->fetchCommitteeListPage('senate', $ttl);
+    }
+
+    /**
+     * @return list<array{code: string, slug: string, name: string}>
+     *
+     * @throws PalegisException
+     */
+    protected function fetchCommitteeListPage(string $chamber, ?int $ttl = null): array
+    {
+        $url = $this->pages[$chamber]['committee-list'] ?? null;
+
+        if ($url === null) {
+            throw new PalegisException("No committee-list page configured for chamber '{$chamber}'");
+        }
+
+        return $this->remember(
+            'committee-list:'.$url,
+            fn () => CommitteeListPageParser::parse($this->fetchBody($url)),
             $ttl
         );
     }

@@ -233,7 +233,7 @@ class PalegisMapper
 
         return new Vote(meta: [
             'id' => $chamber->value.':'.$rcNum,
-            'bill_id' => self::billIdFromRollCall($record),
+            'bill_id' => self::billIdFromRollCallBill($record['bill'] ?? null, $record['session_index'] ?? '0'),
             'chamber' => $chamber,
             'date' => $record['date'] ?? null,
             'description' => $record['action'] ?? '',
@@ -249,21 +249,81 @@ class PalegisMapper
                 $record['session_index'] ?? '0',
                 $rcNum,
             ),
-            'positions' => array_map(
-                fn (array $position): VoteCast => new VoteCast(meta: [
-                    'legislator_id' => $position['id'],
-                    'position' => $position['position'],
-                ]),
-                $record['positions'] ?? []
-            ),
+            'positions' => self::voteCasts($record['positions'] ?? []),
             'raw' => $record,
         ]);
     }
 
-    private static function billIdFromRollCall(array $record): ?string
+    /**
+     * Map one {@see CommitteeRollCallEnumerator} record (a committee roll
+     * call, including every member's individual position) to a {@see Vote}
+     * with {@see Vote::$committee} set. `id` is prefixed distinctly from
+     * {@see voteFromRollCall()}'s floor-vote ids -- a committee and a floor
+     * roll call can otherwise share the same `rc_num`, since they are
+     * different sequences entirely (see {@see CommitteeRollCallEnumerator}'s
+     * class doc for why a committee code is required at all). `bill_id` is
+     * rebuilt the same way {@see voteFromRollCall()} does, since the record's
+     * `session_index` is not carried on the record itself -- the committee
+     * vote-summary page never states it -- so it comes from the caller's own
+     * `$session` instead (the one it is already walking).
+     */
+    public static function voteFromCommitteeRollCall(array $record, string $session, Chamber $chamber): Vote
     {
-        $bill = $record['bill'] ?? null;
+        [, $sessionIndex] = array_pad(explode('_', $session, 2), 2, '0');
+        $tallies = $record['tallies'] ?? [];
+        $committeeCode = $record['committee_code'] ?? '';
+        $rcNum = $record['rc_num'] ?? 0;
 
+        return new Vote(meta: [
+            'id' => 'committee:'.$chamber->value.':'.$committeeCode.':'.$rcNum,
+            'bill_id' => self::billIdFromRollCallBill($record['bill'] ?? null, $sessionIndex),
+            'chamber' => $chamber,
+            'committee' => $record['committee'] ?? null,
+            'date' => $record['date'] ?? null,
+            'description' => $record['motion'] ?? '',
+            'yea' => $tallies['yea'] ?? null,
+            'nay' => $tallies['nay'] ?? null,
+            'nv' => $tallies['no_vote'] ?? null,
+            'passed' => isset($tallies['yea'], $tallies['nay']) ? $tallies['yea'] > $tallies['nay'] : null,
+            'url' => sprintf(
+                'https://www.palegis.us/%s/committees/roll-call-votes/vote-list/vote-summary?sessyr=%s&sessind=%s&committeecode=%s&rollcallid=%d',
+                $chamber === Chamber::Senate ? 'senate' : 'house',
+                (string) strtok($session, '_'),
+                $sessionIndex,
+                $committeeCode,
+                $rcNum,
+            ),
+            'positions' => self::voteCasts($record['positions'] ?? []),
+            'raw' => $record,
+        ]);
+    }
+
+    /**
+     * @param  array<int, array{id: string, position: string}>  $positions
+     * @return list<VoteCast>
+     */
+    private static function voteCasts(array $positions): array
+    {
+        return array_map(
+            fn (array $position): VoteCast => new VoteCast(meta: [
+                'legislator_id' => $position['id'],
+                'position' => $position['position'],
+            ]),
+            $positions
+        );
+    }
+
+    /**
+     * Rebuild the "20250HB0017"-style id {@see billFromHistory()} uses for
+     * `Bill::$id` from a roll-call record's bill year/body/type/number --
+     * not the bare designator ("HB17") -- that format is what the app's own
+     * bill lookup keys on. Null when the roll call carries no bill link at
+     * all (a procedural roll call: a Master Roll Call, a quorum call).
+     *
+     * @param  array{year: string, body: string, type: string, number: string}|null  $bill
+     */
+    private static function billIdFromRollCallBill(?array $bill, string $sessionIndex): ?string
+    {
         if ($bill === null) {
             return null;
         }
@@ -271,7 +331,7 @@ class PalegisMapper
         return sprintf(
             '%s%s%s%s%04d',
             $bill['year'] ?? '',
-            $record['session_index'] ?? '0',
+            $sessionIndex,
             $bill['body'] ?? '',
             $bill['type'] ?? '',
             (int) ($bill['number'] ?? 0),

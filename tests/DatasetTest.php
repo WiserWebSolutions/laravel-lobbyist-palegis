@@ -185,6 +185,11 @@ class DatasetTest extends TestCase
         Http::fake([
             'www.palegis.us/house/roll-calls/summary*rcNum=1' => Http::response($rollCallPage),
             'www.palegis.us/*/roll-calls/summary*' => Http::response('', 404),
+            // No committee list published for either chamber in this
+            // fixture -- the committee-vote walk should degrade gracefully
+            // (see PalegisSessionArchive::votes()) rather than sink the
+            // whole stream, leaving the one floor vote above intact.
+            'www.palegis.us/*/committees/committee-list' => Http::response('', 404),
         ]);
 
         $votes = $this->driver()->setStateContext('PA')->dataset('2025_0')->votes()->all();
@@ -194,6 +199,47 @@ class DatasetTest extends TestCase
         $this->assertSame('20250HB0017', $votes[0]->billId);
         $this->assertSame(Chamber::House, $votes[0]->chamber);
         $this->assertSame('2029', $votes[0]->positions()->first()->legislatorId);
+    }
+
+    public function test_archive_votes_includes_committee_roll_calls(): void
+    {
+        $this->fakeDataPage();
+        $this->fakeRosterForCurrentSession();
+        $this->fakeBillHistory();
+
+        config([
+            'palegis.cache.store' => 'array',
+            'palegis.roll_calls.max_consecutive_misses' => 1,
+        ]);
+
+        $committeeListPage = <<<'HTML'
+        <a href='/house/committees/64/housing-and-community-development' class='committee h4'>Housing & Community Development</a>
+        HTML;
+
+        $committeeVotePage = <<<'HTML'
+        <a href='/house/committees/64/housing-and-community-development' class='committee '>Housing & Community Development</a>
+        <a href=" /house/committees/roll-call-votes/vote-list?rollcalldate=2026-04-13&committeecode=64&sessyr=2025">April 13, 2026</a>
+        <a href='/legislation/bills/2025/hb2367'>HB 2367</a>
+        <li class="list-group-item">
+            <a href=" /house/members/bio/1825/rep-brandon-markosek">Rep. Brandon Markosek</a>
+            <span class="badge text-bg-success" title="Yea"></span>
+        </li>
+        HTML;
+
+        Http::fake([
+            'www.palegis.us/*/roll-calls/summary*' => Http::response('', 404),
+            'www.palegis.us/house/committees/committee-list' => Http::response($committeeListPage),
+            'www.palegis.us/senate/committees/committee-list' => Http::response('', 404),
+            'www.palegis.us/house/committees/roll-call-votes/vote-list/vote-summary*committeecode=64&rollcallid=1' => Http::response($committeeVotePage),
+            'www.palegis.us/*/committees/roll-call-votes/vote-list/vote-summary*' => Http::response('', 404),
+        ]);
+
+        $votes = $this->driver()->setStateContext('PA')->dataset('2025_0')->votes()->all();
+
+        $this->assertCount(1, $votes);
+        $this->assertSame('committee:house:64:1', $votes[0]->id);
+        $this->assertSame('Housing & Community Development', $votes[0]->committee);
+        $this->assertSame('20250HB2367', $votes[0]->billId);
     }
 
     public function test_archive_people_matches_the_session_roster(): void

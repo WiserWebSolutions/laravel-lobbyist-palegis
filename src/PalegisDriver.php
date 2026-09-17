@@ -5,6 +5,7 @@ namespace WiserWebSolutions\LaravelPalegis;
 use Illuminate\Support\Facades\Cache;
 use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
 use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCacheMiss;
+use WiserWebSolutions\LaravelPalegis\Support\CommitteeRollCallEnumerator;
 use WiserWebSolutions\LaravelPalegis\Support\PalegisMapper;
 use WiserWebSolutions\LaravelPalegis\Support\PalegisSessionArchive;
 use WiserWebSolutions\LaravelPalegis\Support\RollCallEnumerator;
@@ -87,8 +88,9 @@ use WiserWebSolutions\Lobbyist\Support\AbstractDriver;
  * {@see self::bill()} already read, just streamed instead of listed/looked-up one
  * at a time, and paired with the member roster for sponsor identity. Its
  * archive's {@see DatasetArchive::votes()} walks both chambers' floor roll
- * calls by number via {@see RollCallEnumerator} -- the Bill History export
- * itself carries no votes at all, so this is a second, independent source
+ * calls by number via {@see RollCallEnumerator}, then every committee's own
+ * roll calls via {@see CommitteeRollCallEnumerator} -- the Bill History
+ * export itself carries no votes at all, so these are independent sources
  * read alongside it, each completed roll call cached forever once read
  * (see {@see RollCallEnumerator}'s own class doc). {@see billChanges()}
  * reuses {@see bills()} verbatim — the summary listing already carries each
@@ -355,6 +357,7 @@ class PalegisDriver extends AbstractDriver implements BillChangeProvider, BillLo
             roster: $roster,
             rosterIndex: $this->rosterIndex($roster),
             rollCalls: $this->rollCallEnumerator(),
+            committeeRollCalls: $this->committeeRollCallEnumerator(),
         );
     }
 
@@ -376,6 +379,16 @@ class PalegisDriver extends AbstractDriver implements BillChangeProvider, BillLo
     private function rollCallEnumerator(): RollCallEnumerator
     {
         return new RollCallEnumerator(
+            cache: Cache::store(config('palegis.cache.store')),
+            maxConsecutiveMisses: (int) config('palegis.roll_calls.max_consecutive_misses', 5),
+            request: (array) config('palegis.request', []),
+            hardCeiling: (int) config('palegis.roll_calls.hard_ceiling', 5000),
+        );
+    }
+
+    private function committeeRollCallEnumerator(): CommitteeRollCallEnumerator
+    {
+        return new CommitteeRollCallEnumerator(
             cache: Cache::store(config('palegis.cache.store')),
             maxConsecutiveMisses: (int) config('palegis.roll_calls.max_consecutive_misses', 5),
             request: (array) config('palegis.request', []),

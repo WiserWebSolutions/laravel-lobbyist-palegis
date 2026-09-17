@@ -92,6 +92,75 @@ class PalegisMapperTest extends TestCase
         $this->assertSame(VotePosition::Nay, $positions->last()->position);
     }
 
+    /**
+     * @return array{committee_code: string, rc_num: int, committee: string, date: string, bill: array{year: string, body: string, type: string, number: string}|null, motion: string, tallies: array<string, int>, positions: list<array{id: string, name: string, position: string}>}
+     */
+    private function committeeRollCallRecord(): array
+    {
+        return [
+            'committee_code' => '64',
+            'rc_num' => 1920,
+            'committee' => 'Housing & Community Development',
+            'date' => '2026-04-13',
+            'bill' => ['year' => '2025', 'body' => 'H', 'type' => 'B', 'number' => '2367'],
+            'motion' => 'Report Bill As Committed',
+            'tallies' => ['yea' => 14, 'nay' => 12, 'no_vote' => 0],
+            'positions' => [
+                ['id' => '1825', 'name' => 'Brandon Markosek', 'position' => 'Yea'],
+                ['id' => '1933', 'name' => 'Aerion Abney', 'position' => 'Nay'],
+            ],
+        ];
+    }
+
+    public function test_vote_from_committee_roll_call_sets_the_committee_and_tallies(): void
+    {
+        $vote = PalegisMapper::voteFromCommitteeRollCall($this->committeeRollCallRecord(), '2025_0', Chamber::House);
+
+        $this->assertSame('Housing & Community Development', $vote->committee);
+        $this->assertSame(14, $vote->yea);
+        $this->assertSame(12, $vote->nay);
+        $this->assertTrue($vote->passed);
+        $this->assertSame('2026-04-13', $vote->date?->format('Y-m-d'));
+        $this->assertSame('Report Bill As Committed', $vote->description);
+    }
+
+    public function test_vote_from_committee_roll_call_id_is_distinct_from_a_floor_votes(): void
+    {
+        // A committee and a floor roll call can otherwise share the same
+        // rc_num -- they are entirely different sequences.
+        $vote = PalegisMapper::voteFromCommitteeRollCall($this->committeeRollCallRecord(), '2025_0', Chamber::House);
+
+        $this->assertSame('committee:house:64:1920', $vote->id);
+    }
+
+    public function test_vote_from_committee_roll_call_rebuilds_the_bill_history_id_format(): void
+    {
+        $vote = PalegisMapper::voteFromCommitteeRollCall($this->committeeRollCallRecord(), '2025_0', Chamber::House);
+
+        $this->assertSame('20250HB2367', $vote->billId);
+    }
+
+    public function test_vote_from_committee_roll_call_has_no_bill_id_without_a_bill(): void
+    {
+        $record = $this->committeeRollCallRecord();
+        $record['bill'] = null;
+
+        $vote = PalegisMapper::voteFromCommitteeRollCall($record, '2025_0', Chamber::House);
+
+        $this->assertNull($vote->billId);
+    }
+
+    public function test_vote_from_committee_roll_call_maps_every_members_individual_position(): void
+    {
+        $vote = PalegisMapper::voteFromCommitteeRollCall($this->committeeRollCallRecord(), '2025_0', Chamber::House);
+        $positions = $vote->positions();
+
+        $this->assertCount(2, $positions);
+        $this->assertSame('1825', $positions->first()->legislatorId);
+        $this->assertSame(VotePosition::Yea, $positions->first()->position);
+        $this->assertSame(VotePosition::Nay, $positions->last()->position);
+    }
+
     public function test_maps_legislator(): void
     {
         $legislator = PalegisMapper::legislator([

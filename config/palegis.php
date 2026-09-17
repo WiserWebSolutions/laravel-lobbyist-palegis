@@ -70,10 +70,12 @@ return [
         'house' => [
             'session-days' => 'https://www.palegis.us/house/session?days',
             'members' => 'https://www.palegis.us/house/members',
+            'committee-list' => 'https://www.palegis.us/house/committees/committee-list',
         ],
         'senate' => [
             'session-days' => 'https://www.palegis.us/senate/session?days',
             'members' => 'https://www.palegis.us/senate/members',
+            'committee-list' => 'https://www.palegis.us/senate/committees/committee-list',
         ],
         'data' => 'https://www.palegis.us/data',
     ],

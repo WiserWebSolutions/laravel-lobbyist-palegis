@@ -43,7 +43,7 @@ class RollCallPageParser
 
     private const DISTRICT_PATTERN = '/District&nbsp;([0-9]+)/i';
 
-    private const POSITION_PATTERN = '/badge text-bg-[a-z-]+"\s+title="([^"]*)"/i';
+    private const POSITION_PATTERN = '/badge text-bg-[a-z-]+[^"]*"\s+title="([^"]*)"/i';
 
     private const DATE_PATTERN = '/roll-calls\?sessYr=([0-9]+)&sessInd=([0-9]+)&date=([0-9]{4}-[0-9]{2}-[0-9]{2})"[^>]*>[^<]*<\/a>\s*([0-9]{1,2}:[0-9]{2}\s*[AP]M)?/i';
 

@@ -4,6 +4,7 @@ namespace WiserWebSolutions\LaravelPalegis\Support;
 
 use Generator;
 use Illuminate\Support\LazyCollection;
+use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
 use WiserWebSolutions\LaravelPalegis\LaravelPalegis;
 use WiserWebSolutions\LaravelPalegis\PalegisDriver;
 use WiserWebSolutions\Lobbyist\Contracts\DatasetArchive;
@@ -14,7 +15,7 @@ use WiserWebSolutions\Lobbyist\Support\ZipDatasetArchive;
 
 /**
  * A {@see DatasetArchive} over one session's Bill History Data export, plus
- * its member roster and floor roll calls.
+ * its member roster and floor/committee roll calls.
  *
  * Unlike {@see ZipDatasetArchive}, this
  * is not backed by a single downloaded file: {@see bills()} streams the Bill
@@ -22,13 +23,10 @@ use WiserWebSolutions\Lobbyist\Support\ZipDatasetArchive;
  * {@see LaravelPalegis::eachBillHistoryRecord()}), {@see people()} wraps
  * a member roster fetched once up front (see
  * {@see PalegisDriver::dataset()}), and {@see votes()} walks both chambers'
- * floor roll calls by number via {@see RollCallEnumerator} -- three
- * independent reads, not one file split three ways. {@see path()} therefore
+ * floor roll calls by number via {@see RollCallEnumerator}, then every
+ * committee's own roll calls via {@see CommitteeRollCallEnumerator} -- four
+ * independent reads, not one file split four ways. {@see path()} therefore
  * has no real file to point at; see {@see DatasetArchive::path()}.
- *
- * {@see votes()} carries floor votes only. Committee roll calls (a
- * different page, different markup) are not yet mapped, so a bill decided
- * only in committee has no vote here.
  */
 class PalegisSessionArchive implements DatasetArchive
 {
@@ -42,6 +40,7 @@ class PalegisSessionArchive implements DatasetArchive
         private readonly LegislatorCollection $roster,
         private readonly array $rosterIndex,
         private readonly RollCallEnumerator $rollCalls,
+        private readonly CommitteeRollCallEnumerator $committeeRollCalls,
     ) {}
 
     public function dataset(): Dataset
@@ -69,6 +68,22 @@ class PalegisSessionArchive implements DatasetArchive
             foreach (['house' => Chamber::House, 'senate' => Chamber::Senate] as $slug => $chamber) {
                 foreach ($this->rollCalls->walk($slug, $this->session) as $record) {
                     yield PalegisMapper::voteFromRollCall($record, $record['rc_num'], $chamber);
+                }
+
+                try {
+                    $committees = $slug === 'house'
+                        ? $this->client->getHouseCommitteeList()
+                        : $this->client->getSenateCommitteeList();
+                } catch (PalegisException) {
+                    // A committee list this can't fetch or parse (a page
+                    // redesign, a request failure) should not sink the whole
+                    // votes() stream -- floor votes for this chamber, and
+                    // both parts for the other chamber, are still good.
+                    continue;
+                }
+
+                foreach ($this->committeeRollCalls->walkAll($slug, $this->session, $committees) as $record) {
+                    yield PalegisMapper::voteFromCommitteeRollCall($record, $this->session, $chamber);
                 }
             }
         });
