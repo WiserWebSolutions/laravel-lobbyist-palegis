@@ -28,6 +28,16 @@ namespace WiserWebSolutions\LaravelPalegis\Support;
  * id), so `committee_id` here is a synthetic, deterministic key
  * (`"{chamber}:{committee name}"`) -- stable across referrals from this
  * source and never colliding with LegiScan's own numeric ids.
+ *
+ * {@see history()} produces the `{action, date, chamber, importance}` shape
+ * `App\Modules\PolicyPulse\Sync\BillEventRecorder::historyEvents()` expects
+ * (LegiScan's own `history` array uses the same shape verbatim). Every date
+ * this class emits -- here and in {@see referrals()} -- is normalized from
+ * the export's `MM/DD/YY` to `YYYY-MM-DD` by {@see normalizeDate()}: both
+ * `BillEventRecorder` and `App\Modules\PolicyPulse\Sync\CommitteeSynchronizer`
+ * write these dates straight into a raw DB insert/upsert (bypassing Eloquent's
+ * own date casting), so an un-normalized `MM/DD/YY` string would corrupt the
+ * column silently rather than merely sorting wrong.
  */
 class ActionStatusMapper
 {
@@ -118,11 +128,86 @@ class ActionStatusMapper
                 'committee_id' => $chamber.':'.strtoupper($committee),
                 'name' => self::titleCase($committee),
                 'chamber' => $chamber,
-                'date' => ($action['date'] ?? '') !== '' ? $action['date'] : null,
+                'date' => self::normalizeDate($action['date'] ?? null),
             ];
         }
 
         return $referrals;
+    }
+
+    /**
+     * The bill's procedural actions, in the shape
+     * `App\Modules\PolicyPulse\Sync\BillEventRecorder::historyEvents()`
+     * expects -- LegiScan's own `history` array, which that class was
+     * written against, uses this same shape natively.
+     *
+     * @param  array<int, array{verb?: string, full_action?: string, date?: string, chamber?: string}>  $actions
+     * @return list<array{action: string, date: ?string, chamber: ?string, importance: bool}>
+     */
+    public static function history(array $actions): array
+    {
+        $history = [];
+
+        foreach ($actions as $action) {
+            $description = trim((string) ($action['full_action'] ?? ''));
+
+            if ($description === '') {
+                continue;
+            }
+
+            $history[] = [
+                'action' => $description,
+                'date' => self::normalizeDate($action['date'] ?? null),
+                'chamber' => ($action['chamber'] ?? '') !== '' ? $action['chamber'] : null,
+
+                // palegis.us flags no action as procedurally significant the
+                // way LegiScan's own `importance` does, so this approximates
+                // it: an action whose verb also drives a status transition
+                // (see VERB_STATUSES) is exactly the subset a reader would
+                // call a milestone rather than routine housekeeping (a
+                // second reading, a journal-page cross-reference).
+                'importance' => self::isMajorVerb((string) ($action['verb'] ?? '')),
+            ];
+        }
+
+        return $history;
+    }
+
+    private static function isMajorVerb(string $verb): bool
+    {
+        $verb = strtolower(trim($verb));
+
+        if ($verb === '') {
+            return false;
+        }
+
+        foreach (self::VERB_STATUSES as $needle => $ignored) {
+            if (str_starts_with($verb, $needle) || str_contains($verb, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The export reports every date as `MM/DD/YY`. Both {@see referrals()}
+     * and {@see history()} feed callers that write the result straight into
+     * a raw DB insert/upsert, bypassing Eloquent's own date casting -- an
+     * un-normalized date string would corrupt the column rather than merely
+     * sort wrong, so every date this class emits goes through here first.
+     */
+    private static function normalizeDate(?string $date): ?string
+    {
+        $date = trim((string) $date);
+
+        if ($date === '') {
+            return null;
+        }
+
+        $parsed = \DateTime::createFromFormat('m/d/y', $date);
+
+        return $parsed !== false ? $parsed->format('Y-m-d') : null;
     }
 
     private static function isReferralVerb(string $verb): bool

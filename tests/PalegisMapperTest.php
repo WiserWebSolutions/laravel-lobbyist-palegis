@@ -402,6 +402,20 @@ class PalegisMapperTest extends TestCase
         $this->assertSame('H:EDUCATION', $bill->meta['raw']['referrals'][0]['committee_id']);
     }
 
+    public function test_bill_from_history_includes_derived_history_in_the_raw_meta(): void
+    {
+        // BillEventRecorder::historyEvents()/introducedAt() read this exact
+        // key -- LegiScan's own payload has a native `history` array this
+        // shape matches -- without it, a palegis-sourced bill imports with no
+        // timeline at all.
+        $bill = PalegisMapper::billFromHistory($this->billRecord());
+
+        $this->assertArrayHasKey('history', $bill->meta['raw']);
+        $this->assertCount(2, $bill->meta['raw']['history']);
+        $this->assertSame('Referred to EDUCATION', $bill->meta['raw']['history'][0]['action']);
+        $this->assertSame('2025-01-08', $bill->meta['raw']['history'][0]['date']);
+    }
+
     public function test_bill_summary_from_history_omits_referrals_but_still_has_status(): void
     {
         $bill = PalegisMapper::billSummaryFromHistory($this->billRecord());

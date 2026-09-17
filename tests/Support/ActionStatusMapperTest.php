@@ -81,7 +81,10 @@ class ActionStatusMapperTest extends TestCase
         $this->assertSame('H:EDUCATION', $referrals[0]['committee_id']);
         $this->assertSame('Education', $referrals[0]['name']);
         $this->assertSame('H', $referrals[0]['chamber']);
-        $this->assertSame('01/08/25', $referrals[0]['date']);
+        // Normalized from the export's MM/DD/YY -- both this and history()
+        // feed a raw DB insert/upsert that bypasses Eloquent's own date
+        // casting, so an un-normalized date would corrupt the column.
+        $this->assertSame('2025-01-08', $referrals[0]['date']);
         $this->assertSame('H:APPROPRIATIONS', $referrals[1]['committee_id']);
         $this->assertSame('Appropriations', $referrals[1]['name']);
     }
@@ -99,5 +102,52 @@ class ActionStatusMapperTest extends TestCase
     {
         $this->assertSame([], ActionStatusMapper::referrals([]));
         $this->assertSame('introduced', ActionStatusMapper::status([])['status']);
+    }
+
+    public function test_history_maps_every_action_with_a_full_action_text(): void
+    {
+        $history = ActionStatusMapper::history([
+            ['verb' => 'Referred to', 'full_action' => 'Referred to EDUCATION, Jan. 8, 2025', 'date' => '01/08/25', 'chamber' => 'H'],
+            ['verb' => 'First consideration,', 'full_action' => 'First consideration, May 7, 2025', 'date' => '05/07/25', 'chamber' => 'H'],
+        ]);
+
+        $this->assertCount(2, $history);
+        $this->assertSame('Referred to EDUCATION, Jan. 8, 2025', $history[0]['action']);
+        $this->assertSame('2025-01-08', $history[0]['date']);
+        $this->assertSame('H', $history[0]['chamber']);
+    }
+
+    public function test_history_flags_a_status_bearing_verb_as_important(): void
+    {
+        $history = ActionStatusMapper::history([
+            ['verb' => 'Referred to', 'full_action' => 'Referred to EDUCATION', 'date' => '01/08/25'],
+            ['verb' => 'First consideration,', 'full_action' => 'First consideration', 'date' => '05/07/25'],
+        ]);
+
+        $this->assertTrue($history[0]['importance']);
+        $this->assertFalse($history[1]['importance']);
+    }
+
+    public function test_history_skips_an_action_with_no_full_action_text(): void
+    {
+        $history = ActionStatusMapper::history([
+            ['verb' => 'Referred to', 'full_action' => '', 'date' => '01/08/25'],
+        ]);
+
+        $this->assertSame([], $history);
+    }
+
+    public function test_history_leaves_the_date_null_when_unparseable(): void
+    {
+        $history = ActionStatusMapper::history([
+            ['verb' => 'Referred to', 'full_action' => 'Referred to EDUCATION', 'date' => ''],
+        ]);
+
+        $this->assertNull($history[0]['date']);
+    }
+
+    public function test_history_is_empty_for_no_actions(): void
+    {
+        $this->assertSame([], ActionStatusMapper::history([]));
     }
 }

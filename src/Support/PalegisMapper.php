@@ -92,7 +92,15 @@ class PalegisMapper
         ];
 
         if ($includeRaw) {
-            $meta['raw'] = [...$record, 'referrals' => ActionStatusMapper::referrals($record['actions'] ?? [])];
+            $meta['raw'] = [
+                ...$record,
+                'referrals' => ActionStatusMapper::referrals($record['actions'] ?? []),
+                // BillEventRecorder::historyEvents()/introducedAt() read this
+                // key by that exact name (LegiScan's own payload has a native
+                // `history` array in this shape) -- without it, a
+                // palegis-sourced bill imports with no timeline at all.
+                'history' => ActionStatusMapper::history($record['actions'] ?? []),
+            ];
         }
 
         return new Bill(meta: $meta);
