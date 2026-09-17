@@ -4,6 +4,7 @@ namespace WiserWebSolutions\LaravelPalegis;
 
 use Illuminate\Support\ServiceProvider;
 use WiserWebSolutions\LaravelPalegis\Console\Commands\SyncBillHistoryCommand;
+use WiserWebSolutions\LaravelPalegis\Console\Commands\VerifyScrapersCommand;
 use WiserWebSolutions\Lobbyist\LobbyistManager;
 
 class LaravelPalegisServiceProvider extends ServiceProvider
@@ -24,6 +25,7 @@ class LaravelPalegisServiceProvider extends ServiceProvider
 
             $this->commands([
                 SyncBillHistoryCommand::class,
+                VerifyScrapersCommand::class,
             ]);
         }
 

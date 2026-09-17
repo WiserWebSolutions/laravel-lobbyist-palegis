@@ -156,5 +156,17 @@ return [
         // session length, but a guarantee the walk always terminates even if
         // the server were to answer every request with an unrelated success.
         'hard_ceiling' => (int) env('PALEGIS_ROLL_CALL_HARD_CEILING', 5000),
+
+        // Known-good identifiers `php artisan palegis:verify-scrapers` checks
+        // against, so a page redesign is caught as a CI failure rather than a
+        // silent empty parse the next time the sync actually runs. These are
+        // real, permanent history for the 2025-2026 session and never
+        // change -- update them once that session ends and its pages age out.
+        'verify' => [
+            'session' => env('PALEGIS_VERIFY_SESSION', '2025_0'),
+            'floor_rc_num' => (int) env('PALEGIS_VERIFY_FLOOR_RC_NUM', 1),
+            'committee_code' => env('PALEGIS_VERIFY_COMMITTEE_CODE', '64'),
+            'committee_rc_num' => (int) env('PALEGIS_VERIFY_COMMITTEE_RC_NUM', 1920),
+        ],
     ],
 ];
