@@ -4,11 +4,13 @@ namespace WiserWebSolutions\LaravelPalegis\Support;
 
 use WiserWebSolutions\LaravelPalegis\LaravelPalegis;
 use WiserWebSolutions\Lobbyist\Data\Bill;
+use WiserWebSolutions\Lobbyist\Data\BillHistoryEntry;
 use WiserWebSolutions\Lobbyist\Data\BillText;
 use WiserWebSolutions\Lobbyist\Data\BillTextCollection;
 use WiserWebSolutions\Lobbyist\Data\ChamberSessionDay;
 use WiserWebSolutions\Lobbyist\Data\CommitteeAssignment;
 use WiserWebSolutions\Lobbyist\Data\CommitteeMeeting;
+use WiserWebSolutions\Lobbyist\Data\CommitteeReferral;
 use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\Session;
 use WiserWebSolutions\Lobbyist\Data\Vote;
@@ -29,9 +31,10 @@ class PalegisMapper
     /**
      * Map a Bill History Data record (see LaravelPalegis::getBillHistory()) to
      * a full-detail Bill for a single-bill lookup, preserving the raw record
-     * (sponsors, full action history, full printer-number history, plus a
-     * derived `referrals` list -- see {@see ActionStatusMapper::referrals()})
-     * since only one record is materialized at a time.
+     * on `meta['raw']` (sponsors, full printer-number history, ...) since only
+     * one record is materialized at a time. `Bill::history()`/`Bill::referrals()`
+     * (see {@see billDto()}) are populated either way -- see
+     * {@see billSummaryFromHistory()}.
      *
      * @param  array<string, string>  $rosterIndex  Sponsor identity join: maps
      *                                              {@see rosterKey()} to a member id, so a sponsor entry (which carries
@@ -49,11 +52,12 @@ class PalegisMapper
 
     /**
      * Map a Bill History Data record to a lightweight-summary Bill, for
-     * listing every bill in a session at once. Omits the raw record
-     * (complete action history, complete printer-number history)
-     * — a session can hold thousands of bills, and retaining full detail on
-     * every one of them when only the summary fields are needed is the
-     * majority of the memory cost of listing them all.
+     * listing every bill in a session at once. Omits the raw record itself
+     * (complete printer-number history, cosponsorship memo, ...) — a session
+     * can hold thousands of bills, and retaining full detail on every one of
+     * them when only the summary fields are needed is the majority of the
+     * memory cost of listing them all. `history()`/`referrals()` are still
+     * populated (they only need `actions`, which every record carries).
      *
      * @param  array<string, string>  $rosterIndex  See {@see billFromHistory()}.
      */
@@ -89,18 +93,22 @@ class PalegisMapper
             'change_hash' => ($record['last_update'] ?? '') !== '' ? $record['last_update'] : null,
             'texts' => self::billTextHistory($record),
             'sponsors' => self::sponsors($record['sponsors'] ?? [], $rosterIndex),
+            // Only ever needs $record['actions'], present on every record
+            // regardless of $includeRaw -- so a summary listing (used for
+            // change detection) gets a timeline and referrals too, not just a
+            // full-detail lookup.
+            'history' => array_map(
+                fn (array $entry) => new BillHistoryEntry(meta: $entry),
+                ActionStatusMapper::history($record['actions'] ?? [])
+            ),
+            'referrals' => array_map(
+                fn (array $referral) => new CommitteeReferral(meta: $referral),
+                ActionStatusMapper::referrals($record['actions'] ?? [])
+            ),
         ];
 
         if ($includeRaw) {
-            $meta['raw'] = [
-                ...$record,
-                'referrals' => ActionStatusMapper::referrals($record['actions'] ?? []),
-                // BillEventRecorder::historyEvents()/introducedAt() read this
-                // key by that exact name (LegiScan's own payload has a native
-                // `history` array in this shape) -- without it, a
-                // palegis-sourced bill imports with no timeline at all.
-                'history' => ActionStatusMapper::history($record['actions'] ?? []),
-            ];
+            $meta['raw'] = $record;
         }
 
         return new Bill(meta: $meta);

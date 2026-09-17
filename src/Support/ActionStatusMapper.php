@@ -22,22 +22,23 @@ namespace WiserWebSolutions\LaravelPalegis\Support;
  * running status untouched rather than resetting it.
  *
  * {@see referrals()} produces one row per committee-referral action, in the
- * shape `App\Modules\PolicyPulse\Sync\CommitteeSynchronizer::referralRowsFor()`
- * expects (`committee_id`, `name`, `chamber`, `date`). palegis.us publishes no
- * numeric committee id (LegiScan's `referrals[].committee_id` is a LegiScan
- * id), so `committee_id` here is a synthetic, deterministic key
- * (`"{chamber}:{committee name}"`) -- stable across referrals from this
- * source and never colliding with LegiScan's own numeric ids.
+ * shape `WiserWebSolutions\Lobbyist\Data\CommitteeReferral` expects
+ * (`committee_id`, `name`, `chamber`, `date`) -- see
+ * {@see PalegisMapper::billDto()}, which wraps this output into that DTO.
+ * palegis.us publishes no numeric committee id (LegiScan's own
+ * `referrals[].committee_id` is a LegiScan id), so `committee_id` here is a
+ * synthetic, deterministic key (`"{chamber}:{committee name}"`) -- stable
+ * across referrals from this source and never colliding with LegiScan's own
+ * numeric ids.
  *
  * {@see history()} produces the `{action, date, chamber, importance}` shape
- * `App\Modules\PolicyPulse\Sync\BillEventRecorder::historyEvents()` expects
- * (LegiScan's own `history` array uses the same shape verbatim). Every date
- * this class emits -- here and in {@see referrals()} -- is normalized from
- * the export's `MM/DD/YY` to `YYYY-MM-DD` by {@see normalizeDate()}: both
- * `BillEventRecorder` and `App\Modules\PolicyPulse\Sync\CommitteeSynchronizer`
- * write these dates straight into a raw DB insert/upsert (bypassing Eloquent's
- * own date casting), so an un-normalized `MM/DD/YY` string would corrupt the
- * column silently rather than merely sorting wrong.
+ * `WiserWebSolutions\Lobbyist\Data\BillHistoryEntry` expects (LegiScan's own
+ * `history` array uses the same shape verbatim). Every date this class emits
+ * -- here and in {@see referrals()} -- is normalized from the export's
+ * `MM/DD/YY` to `YYYY-MM-DD` by {@see normalizeDate()}: a downstream consumer
+ * of either DTO may write these dates straight into a raw DB insert/upsert
+ * (bypassing Eloquent's own date casting), so an un-normalized `MM/DD/YY`
+ * string would corrupt a column silently rather than merely sorting wrong.
  */
 class ActionStatusMapper
 {

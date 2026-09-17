@@ -143,7 +143,7 @@ class DatasetTest extends TestCase
         $hb = collect($bills)->first(fn (Bill $bill) => $bill->number === 'HB17');
         // Full detail (raw + sponsors), unlike PalegisDriver::bills()'s summary.
         $this->assertArrayHasKey('raw', $hb->meta);
-        $this->assertArrayHasKey('referrals', $hb->meta['raw']);
+        $this->assertNotEmpty($hb->referrals());
     }
 
     public function test_archive_bills_resolves_sponsors_against_the_session_roster(): void

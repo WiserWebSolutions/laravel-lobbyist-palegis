@@ -393,35 +393,36 @@ class PalegisMapperTest extends TestCase
         $this->assertSame('Mandating Cursive Handwriting', $bill->description);
     }
 
-    public function test_bill_from_history_includes_derived_referrals_in_the_raw_meta(): void
+    public function test_bill_from_history_includes_derived_referrals(): void
     {
         $bill = PalegisMapper::billFromHistory($this->billRecord());
 
-        $this->assertArrayHasKey('referrals', $bill->meta['raw']);
-        $this->assertCount(1, $bill->meta['raw']['referrals']);
-        $this->assertSame('H:EDUCATION', $bill->meta['raw']['referrals'][0]['committee_id']);
+        $this->assertCount(1, $bill->referrals());
+        $this->assertSame('H:EDUCATION', $bill->referrals()->first()->committeeId);
     }
 
-    public function test_bill_from_history_includes_derived_history_in_the_raw_meta(): void
+    public function test_bill_from_history_includes_derived_history(): void
     {
-        // BillEventRecorder::historyEvents()/introducedAt() read this exact
-        // key -- LegiScan's own payload has a native `history` array this
-        // shape matches -- without it, a palegis-sourced bill imports with no
-        // timeline at all.
         $bill = PalegisMapper::billFromHistory($this->billRecord());
 
-        $this->assertArrayHasKey('history', $bill->meta['raw']);
-        $this->assertCount(2, $bill->meta['raw']['history']);
-        $this->assertSame('Referred to EDUCATION', $bill->meta['raw']['history'][0]['action']);
-        $this->assertSame('2025-01-08', $bill->meta['raw']['history'][0]['date']);
+        $this->assertCount(2, $bill->history());
+        $this->assertSame('Referred to EDUCATION', $bill->history()->first()->action);
+        $this->assertSame('2025-01-08', $bill->history()->first()->date->toDateString());
     }
 
-    public function test_bill_summary_from_history_omits_referrals_but_still_has_status(): void
+    public function test_bill_summary_from_history_still_exposes_history_and_referrals(): void
     {
+        // Unlike the raw record (sponsors, printer-number history, ...),
+        // history()/referrals() only need `actions`, present on every record
+        // regardless of $includeRaw -- so a summary listing (used for change
+        // detection) gets a timeline and referrals too, not just a full-detail
+        // lookup.
         $bill = PalegisMapper::billSummaryFromHistory($this->billRecord());
 
         $this->assertArrayNotHasKey('raw', $bill->meta);
         $this->assertSame('reported_favourably', $bill->status);
+        $this->assertCount(2, $bill->history());
+        $this->assertCount(1, $bill->referrals());
     }
 
     public function test_sponsors_resolve_to_a_legislator_id_via_the_roster_index(): void
