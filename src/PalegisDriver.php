@@ -2,10 +2,12 @@
 
 namespace WiserWebSolutions\LaravelPalegis;
 
+use Illuminate\Support\Facades\Cache;
 use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
 use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCacheMiss;
 use WiserWebSolutions\LaravelPalegis\Support\PalegisMapper;
 use WiserWebSolutions\LaravelPalegis\Support\PalegisSessionArchive;
+use WiserWebSolutions\LaravelPalegis\Support\RollCallEnumerator;
 use WiserWebSolutions\LaravelPalegis\Support\SessionDayPageParser;
 use WiserWebSolutions\Lobbyist\Contracts\DatasetArchive;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillChangeProvider;
@@ -84,12 +86,14 @@ use WiserWebSolutions\Lobbyist\Support\AbstractDriver;
  * {@see PalegisSessionArchive} — the same export {@see bills()} and
  * {@see self::bill()} already read, just streamed instead of listed/looked-up one
  * at a time, and paired with the member roster for sponsor identity. Its
- * archive's {@see DatasetArchive::votes()}
- * is empty for now: roll-call votes on palegis.us live only on scraped,
- * per-roll-call HTML pages, not in this export. {@see billChanges()} reuses
- * {@see bills()} verbatim — the summary listing already carries each bill's
- * {@see Bill::$changeHash} (its `lastUpdate` from the export), and there is no
- * cheaper listing this source offers.
+ * archive's {@see DatasetArchive::votes()} walks both chambers' floor roll
+ * calls by number via {@see RollCallEnumerator} -- the Bill History export
+ * itself carries no votes at all, so this is a second, independent source
+ * read alongside it, each completed roll call cached forever once read
+ * (see {@see RollCallEnumerator}'s own class doc). {@see billChanges()}
+ * reuses {@see bills()} verbatim — the summary listing already carries each
+ * bill's {@see Bill::$changeHash} (its `lastUpdate` from the export), and
+ * there is no cheaper listing this source offers.
  */
 class PalegisDriver extends AbstractDriver implements BillChangeProvider, BillLookup, BillProvider, BillTextHistoryLookup, BillTextLookup, ChamberSessionScheduleProvider, CommitteeAssignmentProvider, CommitteeScheduleProvider, DatasetLookup, DatasetProvider, LegislatorProvider, SessionProvider, VoteProvider
 {
@@ -350,6 +354,7 @@ class PalegisDriver extends AbstractDriver implements BillChangeProvider, BillLo
             session: $sessionId,
             roster: $roster,
             rosterIndex: $this->rosterIndex($roster),
+            rollCalls: $this->rollCallEnumerator(),
         );
     }
 
@@ -366,6 +371,16 @@ class PalegisDriver extends AbstractDriver implements BillChangeProvider, BillLo
         }
 
         return $index;
+    }
+
+    private function rollCallEnumerator(): RollCallEnumerator
+    {
+        return new RollCallEnumerator(
+            cache: Cache::store(config('palegis.cache.store')),
+            maxConsecutiveMisses: (int) config('palegis.roll_calls.max_consecutive_misses', 5),
+            request: (array) config('palegis.request', []),
+            hardCeiling: (int) config('palegis.roll_calls.hard_ceiling', 5000),
+        );
     }
 
     private function findBillRecord(string|int $identifier): array

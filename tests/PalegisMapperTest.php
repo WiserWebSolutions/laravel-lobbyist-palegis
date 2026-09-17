@@ -7,6 +7,7 @@ use WiserWebSolutions\Lobbyist\Data\BillText;
 use WiserWebSolutions\Lobbyist\Enums\Chamber;
 use WiserWebSolutions\Lobbyist\Enums\SponsorType;
 use WiserWebSolutions\Lobbyist\Enums\StateEnum;
+use WiserWebSolutions\Lobbyist\Enums\VotePosition;
 use WiserWebSolutions\Lobbyist\Exceptions\LobbyistException;
 
 class PalegisMapperTest extends TestCase
@@ -22,6 +23,73 @@ class PalegisMapperTest extends TestCase
         $this->assertSame('v1', $vote->id);
         $this->assertSame(Chamber::House, $vote->chamber);
         $this->assertNull($vote->yea);
+    }
+
+    /**
+     * @return array{session_year: string, session_index: string, date: string, time: string, bill: array{year: string, body: string, type: string, number: string}|null, action: string, tallies: array<string, int>, positions: list<array{id: string, name: string, party: string, district: string, position: string}>}
+     */
+    private function rollCallRecord(): array
+    {
+        return [
+            'session_year' => '2025',
+            'session_index' => '0',
+            'date' => '2026-07-23',
+            'time' => '3:07 PM',
+            'bill' => ['year' => '2025', 'body' => 'H', 'type' => 'B', 'number' => '1042'],
+            'action' => 'CONCURRENCE',
+            'tallies' => ['yea' => 102, 'nay' => 100, 'no_vote' => 0, 'leave' => 1],
+            'positions' => [
+                ['id' => '1933', 'name' => 'Aerion Abney', 'party' => 'D', 'district' => '19', 'position' => 'Yea'],
+                ['id' => '2029', 'name' => 'Marc Anderson', 'party' => 'R', 'district' => '116', 'position' => 'Nay'],
+            ],
+        ];
+    }
+
+    public function test_vote_from_roll_call_maps_the_tallies_and_result(): void
+    {
+        $vote = PalegisMapper::voteFromRollCall($this->rollCallRecord(), 1350, Chamber::House);
+
+        $this->assertSame('house:1350', $vote->id);
+        $this->assertSame(Chamber::House, $vote->chamber);
+        $this->assertSame(102, $vote->yea);
+        $this->assertSame(100, $vote->nay);
+        $this->assertSame(0, $vote->notVoting);
+        $this->assertSame(1, $vote->absent);
+        $this->assertTrue($vote->passed);
+        $this->assertSame('2026-07-23', $vote->date?->format('Y-m-d'));
+        $this->assertSame('CONCURRENCE', $vote->description);
+    }
+
+    public function test_vote_from_roll_call_rebuilds_the_bill_history_id_format(): void
+    {
+        $vote = PalegisMapper::voteFromRollCall($this->rollCallRecord(), 1350, Chamber::House);
+
+        // Not the bare designator ("HB1042") -- the same "20250HB0017"-style
+        // id billFromHistory() uses for Bill::$id, since that is what
+        // VoteSynchronizer's bill lookup is keyed on.
+        $this->assertSame('20250HB1042', $vote->billId);
+    }
+
+    public function test_vote_from_roll_call_has_no_bill_id_for_a_procedural_roll_call(): void
+    {
+        $record = $this->rollCallRecord();
+        $record['bill'] = null;
+
+        $vote = PalegisMapper::voteFromRollCall($record, 1, Chamber::Senate);
+
+        $this->assertNull($vote->billId);
+        $this->assertSame('senate:1', $vote->id);
+    }
+
+    public function test_vote_from_roll_call_maps_every_members_individual_position(): void
+    {
+        $vote = PalegisMapper::voteFromRollCall($this->rollCallRecord(), 1350, Chamber::House);
+        $positions = $vote->positions();
+
+        $this->assertCount(2, $positions);
+        $this->assertSame('1933', $positions->first()->legislatorId);
+        $this->assertSame(VotePosition::Yea, $positions->first()->position);
+        $this->assertSame(VotePosition::Nay, $positions->last()->position);
     }
 
     public function test_maps_legislator(): void

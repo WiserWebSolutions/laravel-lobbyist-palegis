@@ -160,15 +160,40 @@ class DatasetTest extends TestCase
         $this->assertSame('2029', $hb->sponsors()->first()->id);
     }
 
-    public function test_archive_votes_is_empty(): void
+    public function test_archive_votes_walks_both_chambers_floor_roll_calls(): void
     {
         $this->fakeDataPage();
         $this->fakeRosterForCurrentSession();
         $this->fakeBillHistory();
 
-        $votes = $this->driver()->setStateContext('PA')->dataset('2025_0')->votes();
+        config([
+            'palegis.cache.store' => 'array',
+            'palegis.roll_calls.max_consecutive_misses' => 1,
+        ]);
 
-        $this->assertCount(0, $votes->all());
+        $rollCallPage = <<<'HTML'
+        <a href="/house/roll-calls?sessYr=2025&sessInd=0&date=2026-07-23">Thursday Jul 23, 2026</a> 3:07 PM
+        <a href="/legislation/bills/2025/hb17">House Bill 17</a>
+        <div class="rc-member d-flex align-items-center">
+            <a href="/house/members/bio/2029/rep-watro" target="_self">Rep. Dane Watro</a>
+            <span class="badge bg-party-R">R</span> House District&nbsp;116
+            <span class="badge text-bg-success" title="Yea"></span>
+            <div class="rc-member-print"></div>
+        </div>
+        HTML;
+
+        Http::fake([
+            'www.palegis.us/house/roll-calls/summary*rcNum=1' => Http::response($rollCallPage),
+            'www.palegis.us/*/roll-calls/summary*' => Http::response('', 404),
+        ]);
+
+        $votes = $this->driver()->setStateContext('PA')->dataset('2025_0')->votes()->all();
+
+        $this->assertCount(1, $votes);
+        $this->assertSame('house:1', $votes[0]->id);
+        $this->assertSame('20250HB0017', $votes[0]->billId);
+        $this->assertSame(Chamber::House, $votes[0]->chamber);
+        $this->assertSame('2029', $votes[0]->positions()->first()->legislatorId);
     }
 
     public function test_archive_people_matches_the_session_roster(): void

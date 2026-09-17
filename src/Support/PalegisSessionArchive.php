@@ -9,26 +9,26 @@ use WiserWebSolutions\LaravelPalegis\PalegisDriver;
 use WiserWebSolutions\Lobbyist\Contracts\DatasetArchive;
 use WiserWebSolutions\Lobbyist\Data\Dataset;
 use WiserWebSolutions\Lobbyist\Data\LegislatorCollection;
+use WiserWebSolutions\Lobbyist\Enums\Chamber;
 use WiserWebSolutions\Lobbyist\Support\ZipDatasetArchive;
 
 /**
  * A {@see DatasetArchive} over one session's Bill History Data export, plus
- * its member roster.
+ * its member roster and floor roll calls.
  *
  * Unlike {@see ZipDatasetArchive}, this
  * is not backed by a single downloaded file: {@see bills()} streams the Bill
  * History export (already downloaded and cached per-bill by
- * {@see LaravelPalegis::eachBillHistoryRecord()}), and {@see people()} wraps
+ * {@see LaravelPalegis::eachBillHistoryRecord()}), {@see people()} wraps
  * a member roster fetched once up front (see
- * {@see PalegisDriver::dataset()}) rather
- * than a second stream. {@see path()} therefore has no real file to point
- * at; see {@see DatasetArchive::path()}.
+ * {@see PalegisDriver::dataset()}), and {@see votes()} walks both chambers'
+ * floor roll calls by number via {@see RollCallEnumerator} -- three
+ * independent reads, not one file split three ways. {@see path()} therefore
+ * has no real file to point at; see {@see DatasetArchive::path()}.
  *
- * {@see votes()} is empty for now -- palegis.us publishes roll-call votes
- * only as scraped HTML pages (one page per roll call, enumerated by number),
- * which is a larger, separate piece of work than the bulk bill import this
- * exists to serve. A driver that cannot supply this yet still satisfies the
- * contract by returning no votes rather than fabricating any.
+ * {@see votes()} carries floor votes only. Committee roll calls (a
+ * different page, different markup) are not yet mapped, so a bill decided
+ * only in committee has no vote here.
  */
 class PalegisSessionArchive implements DatasetArchive
 {
@@ -41,6 +41,7 @@ class PalegisSessionArchive implements DatasetArchive
         private readonly string $session,
         private readonly LegislatorCollection $roster,
         private readonly array $rosterIndex,
+        private readonly RollCallEnumerator $rollCalls,
     ) {}
 
     public function dataset(): Dataset
@@ -64,7 +65,13 @@ class PalegisSessionArchive implements DatasetArchive
 
     public function votes(): LazyCollection
     {
-        return LazyCollection::empty();
+        return LazyCollection::make(function (): Generator {
+            foreach (['house' => Chamber::House, 'senate' => Chamber::Senate] as $slug => $chamber) {
+                foreach ($this->rollCalls->walk($slug, $this->session) as $record) {
+                    yield PalegisMapper::voteFromRollCall($record, $record['rc_num'], $chamber);
+                }
+            }
+        });
     }
 
     public function people(): LazyCollection
@@ -83,6 +90,12 @@ class PalegisSessionArchive implements DatasetArchive
         // process -- so calling this first (as DatasetImporter does, to
         // report archive size before importing) costs nothing extra: bills()
         // then reads the now-warm cache instead of downloading twice.
+        //
+        // 'votes' is always 0: unlike bills, there is no cheap header to
+        // read it from -- the only way to count roll calls is to walk them,
+        // which is exactly the expensive work this method exists to avoid
+        // paying twice. The progress line built from this undercounts votes
+        // rather than walking the chamber twice to report a true figure.
         $total = $this->client->getBillHistory($this->session)['total'] ?? 0;
 
         return ['bills' => $total, 'votes' => 0, 'people' => $this->roster->count()];

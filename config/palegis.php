@@ -128,4 +128,31 @@ return [
     'data' => [
         'ttl' => (int) env('PALEGIS_BILL_HISTORY_TTL', 3600),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Floor Roll Calls
+    |--------------------------------------------------------------------------
+    |
+    | Floor roll calls (per-member vote positions) are not in any feed or in
+    | the Bill History export -- they are scraped one page per roll call,
+    | walked by number ("rcNum=1, 2, 3, ..."). See RollCallEnumerator.
+    |
+    | A completed roll call is cached forever regardless of `cache.enabled`
+    | above: it is immutable history, not a live response that can go stale,
+    | and not caching it would make walking a real session's worth of roll
+    | calls (well over a thousand pages) impractical to ever repeat.
+    |
+    */
+    'roll_calls' => [
+        // Consecutive missing roll call numbers before concluding a
+        // chamber's list ends there. Generous rather than tight, so one
+        // transient failure cannot silently truncate the walk.
+        'max_consecutive_misses' => (int) env('PALEGIS_ROLL_CALL_MAX_MISSES', 5),
+
+        // An absolute stop, independent of the above -- not a realistic
+        // session length, but a guarantee the walk always terminates even if
+        // the server were to answer every request with an unrelated success.
+        'hard_ceiling' => (int) env('PALEGIS_ROLL_CALL_HARD_CEILING', 5000),
+    ],
 ];

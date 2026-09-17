@@ -12,6 +12,7 @@ use WiserWebSolutions\Lobbyist\Data\CommitteeMeeting;
 use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\Session;
 use WiserWebSolutions\Lobbyist\Data\Vote;
+use WiserWebSolutions\Lobbyist\Data\VoteCast;
 use WiserWebSolutions\Lobbyist\Enums\Chamber;
 use WiserWebSolutions\Lobbyist\Enums\SponsorType;
 use WiserWebSolutions\Lobbyist\Enums\StateEnum;
@@ -210,6 +211,71 @@ class PalegisMapper
             'url' => $item['link'] ?? '',
             'raw' => $item,
         ]);
+    }
+
+    /**
+     * Map one {@see RollCallEnumerator} record (a floor roll call, including
+     * every member's individual position) to a {@see Vote}.
+     *
+     * `id` is prefixed with the chamber, since House and Senate roll call
+     * numbers are independent sequences that can collide (both can have an
+     * `rcNum=1350`, say). `bill_id` is only ever set when the roll call
+     * carries a bill link -- {@see RollCallPageParser} finds none on a
+     * procedural roll call (a Master Roll Call, a quorum call), and is
+     * rebuilt from the record's own year/session/body/type/number into the
+     * exact format {@see billFromHistory()} uses for `Bill::$id`
+     * ("20250HB0017"), not the bare designator ("HB17") -- that format is
+     * what the app's own bill lookup keys on.
+     */
+    public static function voteFromRollCall(array $record, int $rcNum, Chamber $chamber): Vote
+    {
+        $tallies = $record['tallies'] ?? [];
+
+        return new Vote(meta: [
+            'id' => $chamber->value.':'.$rcNum,
+            'bill_id' => self::billIdFromRollCall($record),
+            'chamber' => $chamber,
+            'date' => $record['date'] ?? null,
+            'description' => $record['action'] ?? '',
+            'yea' => $tallies['yea'] ?? null,
+            'nay' => $tallies['nay'] ?? null,
+            'nv' => $tallies['no_vote'] ?? null,
+            'absent' => $tallies['leave'] ?? null,
+            'passed' => isset($tallies['yea'], $tallies['nay']) ? $tallies['yea'] > $tallies['nay'] : null,
+            'url' => sprintf(
+                'https://www.palegis.us/%s/roll-calls/summary?sessYr=%s&sessInd=%s&rcNum=%d',
+                $chamber === Chamber::Senate ? 'senate' : 'house',
+                $record['session_year'] ?? '',
+                $record['session_index'] ?? '0',
+                $rcNum,
+            ),
+            'positions' => array_map(
+                fn (array $position): VoteCast => new VoteCast(meta: [
+                    'legislator_id' => $position['id'],
+                    'position' => $position['position'],
+                ]),
+                $record['positions'] ?? []
+            ),
+            'raw' => $record,
+        ]);
+    }
+
+    private static function billIdFromRollCall(array $record): ?string
+    {
+        $bill = $record['bill'] ?? null;
+
+        if ($bill === null) {
+            return null;
+        }
+
+        return sprintf(
+            '%s%s%s%s%04d',
+            $bill['year'] ?? '',
+            $record['session_index'] ?? '0',
+            $bill['body'] ?? '',
+            $bill['type'] ?? '',
+            (int) ($bill['number'] ?? 0),
+        );
     }
 
     public static function legislator(array $item, Chamber $chamber): Legislator
