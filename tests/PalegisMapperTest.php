@@ -422,6 +422,39 @@ class PalegisMapperTest extends TestCase
         $this->assertSame('Mandating Cursive Handwriting', $bill->description);
     }
 
+    public function test_bill_from_history_exposes_the_cosponsorship_memo(): void
+    {
+        $record = $this->billRecord();
+        $record['cosponsorship_memo'] = [
+            'text' => 'Mandating Cursive Handwriting',
+            'url' => 'https://www.palegis.us/house/co-sponsorship/memo?memoID=43567',
+        ];
+
+        $bill = PalegisMapper::billFromHistory($record);
+
+        $this->assertSame('Mandating Cursive Handwriting', $bill->memo);
+        $this->assertSame('https://www.palegis.us/house/co-sponsorship/memo?memoID=43567', $bill->memoUrl);
+    }
+
+    public function test_bill_summary_exposes_the_cosponsorship_memo_too(): void
+    {
+        $record = $this->billRecord();
+        $record['cosponsorship_memo'] = ['text' => 'Mandating Cursive Handwriting', 'url' => 'https://example.test'];
+
+        $bill = PalegisMapper::billSummaryFromHistory($record);
+
+        $this->assertSame('Mandating Cursive Handwriting', $bill->memo);
+        $this->assertArrayNotHasKey('raw', $bill->meta);
+    }
+
+    public function test_bill_memo_is_null_when_the_record_carries_no_memo(): void
+    {
+        $bill = PalegisMapper::billFromHistory($this->billRecord());
+
+        $this->assertNull($bill->memo);
+        $this->assertNull($bill->memoUrl);
+    }
+
     public function test_bill_from_history_includes_derived_referrals(): void
     {
         $bill = PalegisMapper::billFromHistory($this->billRecord());

@@ -64,6 +64,23 @@ history preserved on `->meta['raw']`). This backs both `bills()` and lookups via
 uncompressed) fetched and cached as a unit, so the first call in a cache window
 is expensive; `bill()` filters that same cached dataset.
 
+Each bill also carries its **Co-Sponsorship Memo** — the notice the prime
+sponsor circulates asking colleagues to join the bill. Its subject reads as a
+plain-language name for the bill, and is often more informative than the short
+title, which on a newly introduced bill is frequently still boilerplate
+("An Act amending Title 75"):
+
+```php
+$bill = $pa->bill('HB17');
+
+$bill->title;     // "Cursive handwriting"       — the export's short title
+$bill->memo;      // "Mandating Cursive Handwriting" — memo subject, null if none filed
+$bill->memoUrl;   // https://www.palegis.us/house/co-sponsorship/memo?memoID=…
+```
+
+`description` keeps its existing behavior — the memo where there is one, the
+short title otherwise — so nothing reading it needs to change.
+
 **Votes and members** come from the RSS feeds, which are **browse-only** — they
 publish what is current but cannot resolve an arbitrary id. So the driver
 implements `VoteProvider`/`LegislatorProvider` but not their `*Lookup`

@@ -53,7 +53,7 @@ class PalegisMapper
     /**
      * Map a Bill History Data record to a lightweight-summary Bill, for
      * listing every bill in a session at once. Omits the raw record itself
-     * (complete printer-number history, cosponsorship memo, ...) — a session
+     * (complete printer-number history, sponsor rows, ...) — a session
      * can hold thousands of bills, and retaining full detail on every one of
      * them when only the summary fields are needed is the majority of the
      * memory cost of listing them all. `history()`/`referrals()` are still
@@ -73,6 +73,11 @@ class PalegisMapper
 
         ['status' => $status, 'status_date' => $statusDate] = ActionStatusMapper::status($record['actions'] ?? []);
 
+        // The sponsor's Co-Sponsorship Memo subject: a plain-language name for
+        // the bill, and frequently the only human summary one has before its
+        // text is drafted (a brand-new bill's short title is often still the
+        // boilerplate "An Act amending Title 75"). Surfaced as its own field
+        // -- `description` keeps preferring it for backwards compatibility.
         $memo = trim((string) ($record['cosponsorship_memo']['text'] ?? ''));
 
         $meta = [
@@ -80,6 +85,8 @@ class PalegisMapper
             'number' => $record['designator'] ?? '',
             'title' => $record['short_title'] ?? '',
             'description' => $memo !== '' ? $memo : ($record['short_title'] ?? ''),
+            'memo' => $memo,
+            'memo_url' => $record['cosponsorship_memo']['url'] ?? null,
             'state' => StateEnum::PA,
             'chamber' => Chamber::fromString($record['body'] ?? null),
             'status' => $status,
