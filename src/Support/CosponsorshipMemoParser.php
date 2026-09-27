@@ -61,7 +61,7 @@ class CosponsorshipMemoParser
                 throw new PalegisException('Incomplete memo search result.');
             }
             $members = [];
-            foreach (self::nodes($xpath, './/*[@data-clipboard-cell="2"]//a', $card) as $link) {
+            foreach (self::nodes($xpath, './/a[contains(@href,"/members/bio/")]', $card) as $link) {
                 if ($link instanceof DOMElement && preg_match('~/members/bio/(\d+)/~', $link->getAttribute('href'), $member)) {
                     $members[$member[1]] = ['id' => $member[1], 'name' => self::text($link), 'url' => self::url($link->getAttribute('href'))];
                 }

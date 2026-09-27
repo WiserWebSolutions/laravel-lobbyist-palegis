@@ -2,6 +2,11 @@
 
 All notable changes to `laravel-palegis` will be documented in this file.
 
+## v1.9.2
+
+- Read historical authors from visible member cards when the print layout links
+  to legacy archives, preserving their member IDs for PDF-only memos.
+
 ## v1.9.1
 
 - Detect capped searches from their displayed and total counts even when PA omits

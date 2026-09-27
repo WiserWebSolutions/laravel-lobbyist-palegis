@@ -50,6 +50,20 @@ class CosponsorshipMemosTest extends TestCase
         Http::assertSentCount(1);
     }
 
+    public function test_reads_historical_authors_from_the_visible_card_when_print_links_point_to_archives(): void
+    {
+        $index = CosponsorshipMemoParser::index($this->fixture('memo-index-historical-authors'), 'house', '2011_0');
+
+        $this->assertSame('34', $index['items'][0]['members'][0]['id']);
+        $this->assertSame('Rep. Curt Schroder', $index['items'][0]['members'][0]['name']);
+        Http::fake(['*/memo?memoID=5478' => Http::response('', 200, ['Content-Type' => 'application/pdf'])]);
+
+        $memo = app(LaravelPalegis::class)->getCosponsorshipMemo('house', '5478', indexRecord: $index['items'][0]);
+
+        $this->assertSame('pdf', $memo['content_format']);
+        $this->assertSame('34', $memo['members'][0]['id']);
+    }
+
     public function test_reads_full_memos_without_inventing_bill_links_from_the_body(): void
     {
         $memo = CosponsorshipMemoParser::memo($this->fixture('memo-house-pending'), 'house', '49286');
