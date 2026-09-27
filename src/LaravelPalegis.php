@@ -10,6 +10,7 @@ use WiserWebSolutions\LaravelPalegis\Support\BillHistoryFetcher;
 use WiserWebSolutions\LaravelPalegis\Support\BillIdentifier;
 use WiserWebSolutions\LaravelPalegis\Support\CommitteeListPageParser;
 use WiserWebSolutions\LaravelPalegis\Support\Concerns\FetchesHttp;
+use WiserWebSolutions\LaravelPalegis\Support\CosponsorshipMemoParser;
 use WiserWebSolutions\LaravelPalegis\Support\DataPageParser;
 use WiserWebSolutions\LaravelPalegis\Support\MembersPageParser;
 use WiserWebSolutions\LaravelPalegis\Support\SessionDayPageParser;
@@ -107,13 +108,13 @@ class LaravelPalegis
      */
     protected function remember(string $key, callable $producer, ?int $ttl = null): mixed
     {
-        if (! ($this->cache['enabled'] ?? false)) {
+        if ($ttl === 0 || ! ($this->cache['enabled'] ?? false)) {
             return $producer();
         }
 
         // A null store name resolves to the application's default cache store.
         return Cache::store($this->cache['store'] ?? null)
-            ->remember('palegis:'.md5($key), $ttl ?? ($this->cache['ttl'] ?? 3600), $producer);
+            ->remember('palegis:'.md5($key), $ttl ?? ($this->cache['ttl'] ?? 3600), fn () => $producer());
     }
 
     /**
@@ -291,6 +292,100 @@ class LaravelPalegis
     public function getHouseCommitteeAssignments(?int $ttl = null): array
     {
         return $this->fetchRssFeed('house', 'committee-assignments', $ttl);
+    }
+
+    /**
+     * Sessions exposed by the memo search, including historical and special sessions.
+     * Pass ttl: 0 to bypass previously cached data on all memo methods.
+     *
+     * @return list<array{id: string, name: string, current: bool}>
+     */
+    public function getCosponsorshipMemoSessions(string $chamber, ?int $ttl = null): array
+    {
+        $url = $this->memoBaseUrl($chamber);
+
+        return $this->remember('memo-sessions:'.$url, fn () => CosponsorshipMemoParser::sessions($this->fetchBody($url)), $ttl);
+    }
+
+    /**
+     * Search results are capped by PA at 250: callers must subdivide a truncated search.
+     * Dates are inclusive YYYY-MM-DD circulation dates; memberId filters circulating members.
+     *
+     * @return array{session: string, total: int, truncated: bool, member_ids: list<string>, items: list<array<string, mixed>>}
+     */
+    public function getCosponsorshipMemoIndex(
+        string $chamber,
+        string $session,
+        ?string $dateStart = null,
+        ?string $dateEnd = null,
+        ?string $memberId = null,
+        ?int $ttl = null,
+    ): array {
+        if (! preg_match('/^(\d{4})_(\d+)$/', $session, $parts)) {
+            throw new PalegisException('Memo session must have the form YYYY_N.');
+        }
+        foreach ([$dateStart, $dateEnd] as $date) {
+            if ($date !== null && (! preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date, $dateParts)
+                || ! checkdate((int) $dateParts[2], (int) $dateParts[3], (int) $dateParts[1]))) {
+                throw new PalegisException('Memo dates must be valid YYYY-MM-DD dates.');
+            }
+        }
+        if (($dateStart !== null && $dateEnd !== null && $dateStart > $dateEnd)
+            || ($memberId !== null && ! ctype_digit($memberId))) {
+            throw new PalegisException('Invalid memo search range or member ID.');
+        }
+        $url = $this->memoBaseUrl($chamber).'/search-results?'.http_build_query(array_filter([
+            'sessYr' => $parts[1], 'sessInd' => $parts[2],
+            'dateStart' => $dateStart, 'dateEnd' => $dateEnd, 'memberID' => $memberId,
+        ], fn ($value) => $value !== null));
+
+        return $this->remember('memo-index:'.$url, fn () => CosponsorshipMemoParser::index($this->fetchBody($url), $chamber, $session), $ttl);
+    }
+
+    /**
+     * Fetch the complete memo even when it has no introduced bill.
+     *
+     * PDF-only historical memos require the corresponding index record. Their content
+     * is represented by a link; the PDF response stream is closed without reading it.
+     *
+     * @param  array<string, mixed>|null  $indexRecord
+     * @return array<string, mixed>
+     */
+    public function getCosponsorshipMemo(string $chamber, string $memoId, ?int $ttl = null, ?array $indexRecord = null): array
+    {
+        if (! ctype_digit($memoId)) {
+            throw new PalegisException('Memo ID must be numeric.');
+        }
+        $url = $this->memoBaseUrl($chamber).'/memo?memoID='.$memoId;
+
+        $key = 'memo:'.$url.':'.md5(json_encode($indexRecord, JSON_THROW_ON_ERROR));
+
+        return $this->remember($key, function () use ($url, $chamber, $memoId, $indexRecord): array {
+            $response = $this->fetchResponse($url, options: ['stream' => true]);
+            if (str_contains(strtolower($response->header('Content-Type')), 'application/pdf')) {
+                $response->toPsrResponse()->getBody()->close();
+                if (($indexRecord['id'] ?? null) !== $memoId || ($indexRecord['chamber'] ?? null) !== $chamber
+                    || empty($indexRecord['session']) || empty($indexRecord['circulated_at']) || empty($indexRecord['members'])) {
+                    throw new PalegisException('This historical memo is PDF-only; pass its matching memo index record to retain metadata and a PDF link.');
+                }
+
+                return [
+                    ...$indexRecord, 'content_format' => 'pdf', 'body' => '', 'body_html' => '', 'updated_at' => null,
+                    'attachments' => [['title' => 'Original memo (PDF)', 'url' => $url]], 'documents' => [], 'url' => $url,
+                ];
+            }
+
+            return CosponsorshipMemoParser::memo($response->body(), $chamber, $memoId);
+        }, $ttl);
+    }
+
+    private function memoBaseUrl(string $chamber): string
+    {
+        if (! in_array($chamber, ['house', 'senate'], true)) {
+            throw new PalegisException('Memo chamber must be house or senate.');
+        }
+
+        return "https://www.palegis.us/{$chamber}/co-sponsorship";
     }
 
     /** Get the House Co-Sponsorship Memoranda RSS feed. */

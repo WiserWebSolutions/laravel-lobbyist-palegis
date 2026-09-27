@@ -4,6 +4,7 @@ namespace WiserWebSolutions\LaravelPalegis\Support\Concerns;
 
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
@@ -24,11 +25,18 @@ trait FetchesHttp
      */
     protected function fetchBody(string $url, ?string $notFoundHint = null): string
     {
+        return $this->fetchResponse($url, $notFoundHint)->body();
+    }
+
+    /** @param array<string, mixed> $options */
+    protected function fetchResponse(string $url, ?string $notFoundHint = null, array $options = []): Response
+    {
         Log::debug('palegis request: '.$url);
 
         try {
             $response = Http::timeout($this->request['timeout'] ?? 30)
                 ->retry($this->request['retry_times'] ?? 2, $this->request['retry_sleep_ms'] ?? 200)
+                ->withOptions($options)
                 ->get($url);
         } catch (RequestException $e) {
             $status = $e->response?->status();
@@ -41,7 +49,7 @@ trait FetchesHttp
             throw PalegisException::requestFailed($url, $response->status(), $this->hintFor($response->status(), $notFoundHint));
         }
 
-        return $response->body();
+        return $response;
     }
 
     private function hintFor(?int $status, ?string $notFoundHint): ?string

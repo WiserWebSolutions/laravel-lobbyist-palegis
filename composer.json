@@ -19,6 +19,7 @@
     ],
     "require": {
         "php": "^8.4",
+        "ext-dom": "*",
         "ext-simplexml": "*",
         "ext-zip": "*",
         "illuminate/console": "^12.0|^13.0",

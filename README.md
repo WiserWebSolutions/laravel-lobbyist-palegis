@@ -107,7 +107,41 @@ palegis.us feed directly as parsed arrays.
 `getSenateCommitteeSchedule()`, `getSenateCommitteeAssignments()`,
 `getSenateCosponsorshipMemos()`.
 
-## Testing
+## Full co-sponsorship memos
+
+The low-level client can read memos before a bill exists, as well as historical
+and special-session memos:
+
+```php
+$client = app(\WiserWebSolutions\LaravelPalegis\LaravelPalegis::class);
+$sessions = $client->getCosponsorshipMemoSessions('house');
+$index = $client->getCosponsorshipMemoIndex('house', '2025_0', '2026-09-01', '2026-09-07');
+$memo = $client->getCosponsorshipMemo('house', $index['items'][0]['id'], indexRecord: $index['items'][0]);
+```
+
+Use `house` or `senate`. Session IDs include the special-session indicator, e.g.
+`2023_1`. Search dates are inclusive circulation dates; an optional `memberId`
+filters circulating members. The index returns `total`, `truncated`, `member_ids`,
+and `items`. PA limits a search to 250 results: subdivide date ranges, and if
+necessary individual days by member, deduplicate by memo ID, and reconcile totals.
+Do not treat a truncated index as a complete archive.
+
+Memo records include subject, circulation/update timestamps (UTC), full `body`
+text, `body_html`, circulating `members`, zero or more `legislation` references,
+`documents`, `attachments`, and the canonical `url`. HTML is untrusted source
+material: sanitize it before rendering. Memo references are separate from bill
+sponsorship, and one memo may introduce multiple bills.
+
+Some early memos exist only as PDFs. Supply their index record as shown above;
+these return `content_format: pdf`, index metadata, empty text/HTML, and the PDF
+link. PDF streams are closed without reading or retaining their content. HTML
+memos return `content_format: html`. Attachment files are never fetched.
+
+Pass `ttl: 0` to bypass existing cached data, including on the RSS methods.
+Unrecognized pages, mismatched identities/sessions, and HTTP failures throw
+`PalegisException`; they are not interpreted as empty results. Requires PHP DOM.
+
+## Running tests
 
 Tests use `Http::fake()` with RSS fixtures and never hit the network:
 

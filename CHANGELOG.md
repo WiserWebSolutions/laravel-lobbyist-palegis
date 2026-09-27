@@ -2,6 +2,16 @@
 
 All notable changes to `laravel-palegis` will be documented in this file.
 
+## v1.9.0
+
+- Add memo session discovery, searchable indexes with explicit truncation counts,
+  and full co-sponsorship memo retrieval for both chambers, including proposals
+  without bills, multiple introduced bills, authors, and attachment links.
+- Preserve PDF-only historical memos as index metadata and a source link without
+  reading the PDF stream. Source HTML and plain text are kept separately.
+- Reject malformed or mismatched source pages instead of silently losing records.
+- Passing `ttl: 0` now bypasses existing cache entries. Requires PHP DOM.
+
 ## v1.8.0
 
 - Bills now expose their Co-Sponsorship Memo as `$bill->memo` (the memo's
