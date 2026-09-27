@@ -113,6 +113,28 @@ class CosponsorshipMemosTest extends TestCase
         $this->assertSame([], $empty['items']);
     }
 
+    public function test_detects_truncation_without_a_maximum_limit_banner(): void
+    {
+        $html = '<main><input name="sessYr" value="2023"><input name="sessInd" value="0">Showing <b>1</b> of <b>801</b> results.'
+            .'<div data-memoid="39345"><a href="/house/co-sponsorship/memo?memoID=39345">Subject</a></div></main>';
+
+        $index = CosponsorshipMemoParser::index($html, 'house', '2023_0');
+
+        $this->assertTrue($index['truncated']);
+        $this->assertSame(801, $index['total']);
+        $this->assertCount(1, $index['items']);
+    }
+
+    public function test_rejects_missing_displayed_records_even_when_the_page_is_truncated(): void
+    {
+        $this->expectException(PalegisException::class);
+        CosponsorshipMemoParser::index(
+            '<main><input name="sessYr" value="2023"><input name="sessInd" value="0">Showing 2 of 801 results. Maximum result limit reached.'
+            .'<div data-memoid="39345"><a href="/house/co-sponsorship/memo?memoID=39345">Subject</a></div></main>',
+            'house', '2023_0',
+        );
+    }
+
     public function test_zero_ttl_bypasses_an_existing_cache_entry(): void
     {
         config(['palegis.cache.enabled' => true, 'palegis.cache.store' => 'array']);

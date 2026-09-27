@@ -2,6 +2,11 @@
 
 All notable changes to `laravel-palegis` will be documented in this file.
 
+## v1.9.1
+
+- Detect capped searches from their displayed and total counts even when PA omits
+  the maximum-limit banner. Validate every displayed record before continuing.
+
 ## v1.9.0
 
 - Add memo session discovery, searchable indexes with explicit truncation counts,

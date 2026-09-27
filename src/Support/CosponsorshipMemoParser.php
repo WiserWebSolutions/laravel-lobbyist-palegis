@@ -41,8 +41,10 @@ class CosponsorshipMemoParser
         $text = self::text(self::first($xpath, '//main'));
 
         if (preg_match('/Showing\s+([\d,]+)(?:\s+of\s+([\d,]+))?\s+results?\b/i', $text, $match)) {
+            $displayed = (int) str_replace(',', '', $match[1]);
             $total = (int) str_replace(',', '', $match[2] ?? $match[1]);
         } elseif (preg_match('/No (?:memos|results)(?: were)? found/i', $text)) {
+            $displayed = 0;
             $total = 0;
         } else {
             throw new PalegisException('Memo result count not found; refusing to treat an unrecognized page as an empty search.');
@@ -82,9 +84,8 @@ class CosponsorshipMemoParser
             ];
         }
 
-        $truncated = $total > count($items);
-        if (($total > 0 && $items === []) || count($items) > $total
-            || ($truncated && ! str_contains($text, 'Maximum result limit'))) {
+        $truncated = $total > $displayed;
+        if (count($items) !== $displayed || $displayed > $total || ($total > 0 && $items === [])) {
             throw new PalegisException('Memo result count does not match the parsed records.');
         }
 
