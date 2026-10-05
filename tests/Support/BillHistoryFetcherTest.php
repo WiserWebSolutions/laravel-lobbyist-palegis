@@ -127,4 +127,22 @@ class BillHistoryFetcherTest extends TestCase
         unset($records);
         $this->assertSame($before, glob(sys_get_temp_dir().'/palegis_bh_*'));
     }
+
+    public function test_a_well_formed_error_document_cannot_be_imported_as_an_empty_session(): void
+    {
+        $bytes = $this->zipString('error.xml', '<error>Export unavailable</error>');
+        Http::fake(['www.palegis.us/*' => Http::response($bytes)]);
+        $this->expectException(PalegisException::class);
+        $this->expectExceptionMessage('Missing Bill History export header');
+        iterator_to_array((new BillHistoryFetcher)->fetchStream('2025_0'));
+    }
+
+    public function test_a_missing_document_count_cannot_be_imported_as_an_empty_session(): void
+    {
+        $bytes = $this->zipString('error.xml', '<historyExport><session/></historyExport>');
+        Http::fake(['www.palegis.us/*' => Http::response($bytes)]);
+        $this->expectException(PalegisException::class);
+        $this->expectExceptionMessage('Missing document count');
+        iterator_to_array((new BillHistoryFetcher)->fetchStream('2025_0'));
+    }
 }
