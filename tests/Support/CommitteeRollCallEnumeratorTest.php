@@ -56,6 +56,63 @@ class CommitteeRollCallEnumeratorTest extends TestCase
         Http::assertSent(fn ($request) => str_contains($request->url(), 'viewall=true'));
     }
 
+    public function test_numbers_loads_older_votes_from_the_sources_extended_results_endpoint(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            'www.palegis.us/house/committees/roll-call-votes/vote-list?*' => Http::response($this->listPage(range(585, 684), 684)),
+            'www.palegis.us/resources/cfc/committees/info.cfc?*' => Http::response(json_encode($this->listPage(range(1, 584), 684))),
+        ]);
+
+        $this->assertSame(range(1, 684), $this->enumerator()->numbers('house', '2025_0', '64'));
+        Http::assertSentCount(2);
+        Http::assertSent(function ($request) {
+            parse_str(parse_url($request->url(), PHP_URL_QUERY), $query);
+
+            return ($query['method'] ?? null) === 'GetRecentCommitteeVotesWigit'
+                && $query['STARTINGROW'] === '101' && $query['MAXROWS'] === '5000'
+                && $query['COMMITTEECODE'] === '64' && $query['CHAMBER'] === 'H';
+        });
+    }
+
+    public function test_numbers_rejects_extended_results_that_are_still_truncated(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            'www.palegis.us/house/committees/roll-call-votes/vote-list?*' => Http::response($this->listPage(range(2, 101), 101)),
+            'www.palegis.us/resources/cfc/committees/info.cfc?*' => Http::response(json_encode($this->listPage([], 101))),
+        ]);
+
+        $this->expectException(PalegisException::class);
+        $this->expectExceptionMessage('count does not match');
+        $this->enumerator()->numbers('house', '2025_0', '64');
+    }
+
+    public function test_numbers_rejects_an_invalid_extended_results_response(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            'www.palegis.us/house/committees/roll-call-votes/vote-list?*' => Http::response($this->listPage(range(2, 101), 101)),
+            'www.palegis.us/resources/cfc/committees/info.cfc?*' => Http::response('<h1>Unavailable</h1>'),
+        ]);
+
+        $this->expectException(PalegisException::class);
+        $this->expectExceptionMessage('Invalid extended');
+        $this->enumerator()->numbers('house', '2025_0', '64');
+    }
+
+    public function test_numbers_rejects_extended_results_when_the_dependency_returns_503(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            'www.palegis.us/house/committees/roll-call-votes/vote-list?*' => Http::response($this->listPage(range(2, 101), 101)),
+            'www.palegis.us/resources/cfc/committees/info.cfc?*' => Http::response('Unavailable', 503),
+        ]);
+
+        $this->expectException(PalegisException::class);
+        $this->enumerator()->numbers('house', '2025_0', '64');
+    }
+
     public function test_numbers_distinguishes_a_confirmed_empty_index_from_a_redesigned_page(): void
     {
         Http::fake(['www.palegis.us/*' => Http::sequence()->push($this->listPage([], 0))->push('<h1>Unavailable</h1>')]);
@@ -67,7 +124,7 @@ class CommitteeRollCallEnumeratorTest extends TestCase
 
     public function test_numbers_rejects_truncated_indexes(): void
     {
-        Http::fake(['www.palegis.us/*' => Http::response($this->listPage([14], 101))]);
+        Http::fake(['www.palegis.us/*' => Http::response($this->listPage([14], 2))]);
         $this->expectException(PalegisException::class);
         $this->expectExceptionMessage('count does not match');
         $this->enumerator()->numbers('house', '2025_0', '64');
