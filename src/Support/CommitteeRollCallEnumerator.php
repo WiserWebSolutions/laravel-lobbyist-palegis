@@ -39,6 +39,43 @@ class CommitteeRollCallEnumerator
         $this->request = $request ?? [];
     }
 
+    /** @return list<int> */
+    public function numbers(string $chamber, string $session, string $committeeCode): array
+    {
+        [$year, $index] = array_pad(explode('_', $session, 2), 2, '0');
+        $path = "/{$chamber}/committees/roll-call-votes/vote-list";
+        $body = $this->fetchBody(self::BASE_URL.$path.'?'.http_build_query([
+            'sessyr' => $year, 'sessind' => $index, 'committeecode' => $committeeCode, 'viewall' => 'true',
+        ]));
+        if (! preg_match('/id=[\'"]recentVotesWidget[\'"].*?Committee Votes.*?<span[^>]*>\s*(\d+)\s*<\/span>/is', $body, $count)) {
+            throw new PalegisException('Missing committee vote-list count; refusing to claim a complete traversal.');
+        }
+        preg_match_all('/href=[\'"]([^\'"]+)[\'"]/i', $body, $links);
+        $numbers = [];
+        foreach ($links[1] as $link) {
+            $link = trim(html_entity_decode($link));
+            if (parse_url($link, PHP_URL_PATH) !== $path.'/vote-summary') {
+                continue;
+            }
+            parse_str(parse_url($link, PHP_URL_QUERY) ?? '', $query);
+            $query = array_change_key_case($query, CASE_LOWER);
+            if (($query['sessyr'] ?? null) !== $year || ($query['sessind'] ?? null) !== $index || ($query['committeecode'] ?? null) !== $committeeCode) {
+                throw new PalegisException('Committee vote-list links do not match the requested session and committee.');
+            }
+            $number = $query['rollcallid'] ?? null;
+            if (! is_string($number) || ! ctype_digit($number) || (int) $number < 1 || (int) $number > $this->hardCeiling) {
+                throw new PalegisException('Committee vote-list traversal reached its safety ceiling.');
+            }
+            $numbers[(int) $number] = (int) $number;
+        }
+        if (count($numbers) !== (int) $count[1]) {
+            throw new PalegisException('Committee vote-list count does not match its records.');
+        }
+        sort($numbers, SORT_NUMERIC);
+
+        return $numbers;
+    }
+
     /**
      * @param  list<array{code: string, slug: string, name: string}>  $committees
      * @param  string  $session  palegis session id (e.g. "2025_0")
