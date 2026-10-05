@@ -50,6 +50,22 @@ class CommitteeRollCallEnumerator
         if (! preg_match('/id=[\'"]recentVotesWidget[\'"].*?Committee Votes.*?<span[^>]*>\s*(\d+)\s*<\/span>/is', $body, $count)) {
             throw new PalegisException('Missing committee vote-list count; refusing to claim a complete traversal.');
         }
+        if ((int) $count[1] > $this->hardCeiling) {
+            throw new PalegisException('Committee vote-list traversal reached its safety ceiling.');
+        }
+        if ((int) $count[1] > 100) {
+            $remaining = $this->fetchResponse(self::BASE_URL.'/resources/cfc/committees/info.cfc?'.http_build_query([
+                'method' => 'GetRecentCommitteeVotesWigit', 'returnformat' => 'json',
+                'SESSYR' => $year, 'CHAMBER' => $chamber === 'house' ? 'H' : 'S',
+                'COMMITTEECODE' => $committeeCode, 'CLASSTYPE' => 'primary',
+                'BILLNUM' => '', 'BILLTYPE' => '', 'BILLBODY' => '',
+                'EXTENDRESULTS' => 'true', 'STARTINGROW' => 101, 'MAXROWS' => $this->hardCeiling,
+            ]))->json();
+            if (! is_string($remaining)) {
+                throw new PalegisException('Invalid extended committee vote-list response.');
+            }
+            $body .= $remaining;
+        }
         preg_match_all('/href=[\'"]([^\'"]+)[\'"]/i', $body, $links);
         $numbers = [];
         foreach ($links[1] as $link) {
