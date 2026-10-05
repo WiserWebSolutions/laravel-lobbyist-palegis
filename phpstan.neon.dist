@@ -1,5 +1,11 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
 parameters:
     level: 5
+    treatPhpDocTypesAsCertain: false
+    configDirectories:
+        - config
     paths:
         - src
         - config

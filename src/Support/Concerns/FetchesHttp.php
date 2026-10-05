@@ -34,7 +34,8 @@ trait FetchesHttp
         Log::debug('palegis request: '.$url);
 
         try {
-            $response = Http::timeout($this->request['timeout'] ?? 30)
+            $response = Http::connectTimeout($this->request['connect_timeout'] ?? 5)
+                ->timeout($this->request['timeout'] ?? 30)
                 ->retry($this->request['retry_times'] ?? 2, $this->request['retry_sleep_ms'] ?? 200)
                 ->withOptions($options)
                 ->get($url);

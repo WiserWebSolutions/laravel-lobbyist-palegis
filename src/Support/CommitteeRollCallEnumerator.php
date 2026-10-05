@@ -87,6 +87,35 @@ class CommitteeRollCallEnumerator
     /**
      * @return array{committee: ?string, date: ?string, bill: ?array, motion: ?string, tallies: array<string, int>, positions: list<array>}|null
      */
+    /** @return array<string, mixed>|null */
+    public function probe(string $chamber, string $session, string $committeeCode, int $rcNum): ?array
+    {
+        if ($rcNum < 1 || $rcNum > $this->hardCeiling) {
+            throw new PalegisException('Roll-call traversal reached its safety ceiling.');
+        }
+        $key = $this->cacheKey($chamber, $session, $committeeCode, $rcNum);
+        $cached = $this->cache->get($key);
+        if (is_array($cached)) {
+            return ['rc_num' => $rcNum, 'committee_code' => $committeeCode, ...$cached];
+        }
+        try {
+            $response = $this->fetchResponse($this->url($chamber, $session, $committeeCode, $rcNum));
+            $body = $response->body();
+            if (str_contains(strip_tags($body), 'Could not locate this committee vote.')) {
+                return null;
+            }
+        } catch (PalegisException $exception) {
+            if ($exception->getCode() === 404) {
+                return null;
+            }
+            throw $exception;
+        }
+        $record = CommitteeRollCallPageParser::parse($body);
+        $this->cache->forever($key, $record);
+
+        return ['rc_num' => $rcNum, 'committee_code' => $committeeCode, ...$record];
+    }
+
     private function recordFor(string $chamber, string $session, string $committeeCode, int $rcNum): ?array
     {
         $key = $this->cacheKey($chamber, $session, $committeeCode, $rcNum);

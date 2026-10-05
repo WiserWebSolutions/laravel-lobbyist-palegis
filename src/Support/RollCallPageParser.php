@@ -62,7 +62,7 @@ class RollCallPageParser
      */
     public static function parse(string $html): array
     {
-        if (! preg_match_all(self::MEMBER_PATTERN, $html, $matches, PREG_SET_ORDER) || $matches === []) {
+        if (! preg_match_all(self::MEMBER_PATTERN, $html, $matches, PREG_SET_ORDER)) {
             throw new PalegisException(
                 'No members found on the roll call page. palegis.us may have redesigned it -- '
                 .'RollCallPageParser expects a <div class="rc-member ..."> per member.'

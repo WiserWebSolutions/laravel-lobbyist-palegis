@@ -741,6 +741,33 @@ class LaravelPalegis
      *
      * @throws PalegisException
      */
+    /** @return array{export_date: string, total: int, session: string} */
+    public function warmBillHistoryCache(?string $session = null, ?int $ttl = null): array
+    {
+        $session ??= $this->currentSession();
+        $bills = $this->fetcher->fetchStream($session);
+        if ($this->cache['enabled'] ?? false) {
+            $this->billHistoryCache->put($session, $bills, $ttl ?? $this->data['ttl'] ?? null);
+
+            return $this->billHistoryCache->metadata($session) ?? throw new PalegisException('Bill History cache was lost while warming it.');
+        }
+        foreach ($bills as $bill) {
+            unset($bill);
+        }
+
+        return [...$bills->getReturn(), 'session' => $session];
+    }
+
+    /** @return array{export_date: string, total: int, session: string} */
+    public function getBillHistoryMetadata(?string $session = null): array
+    {
+        $session ??= $this->currentSession();
+
+        return ($this->cache['enabled'] ?? false)
+            ? ($this->billHistoryCache->metadata($session) ?? $this->warmBillHistoryCache($session))
+            : $this->fetcher->metadata($session);
+    }
+
     public function syncBillHistory(?string $session = null, ?int $ttl = null): array
     {
         $session ??= $this->currentSession();
@@ -753,8 +780,8 @@ class LaravelPalegis
             $meta = $bills->getReturn();
 
             return [
-                'export_date' => $meta['export_date'] ?? '',
-                'total' => $meta['total'] ?? count($collected),
+                'export_date' => $meta['export_date'],
+                'total' => $meta['total'],
                 'session' => $session,
                 'bills' => $collected,
             ];
@@ -785,11 +812,11 @@ class LaravelPalegis
         $session ??= $this->currentSession();
 
         if (! ($this->cache['enabled'] ?? false)) {
-            return $this->scanBills($this->fetcher->fetch($session)['bills'] ?? [], $identifier);
+            return $this->scanBills($this->fetcher->fetchStream($session), $identifier);
         }
 
         if (! $this->billHistoryCache->hasIndex($session)) {
-            $this->syncBillHistory($session);
+            $this->warmBillHistoryCache($session);
         }
 
         return $this->billHistoryCache->find($session, $identifier);
@@ -821,22 +848,22 @@ class LaravelPalegis
         $session ??= $this->currentSession();
 
         if (! ($this->cache['enabled'] ?? false)) {
-            yield from $this->fetcher->fetch($session)['bills'] ?? [];
+            yield from $this->fetcher->fetchStream($session);
 
             return;
         }
 
         if (! $this->billHistoryCache->hasIndex($session)) {
-            $this->syncBillHistory($session);
+            $this->warmBillHistoryCache($session);
         }
 
         yield from $this->billHistoryCache->each($session);
     }
 
     /**
-     * @param  array<int, array>  $bills
+     * @param  iterable<int, array>  $bills
      */
-    private function scanBills(array $bills, string $identifier): ?array
+    private function scanBills(iterable $bills, string $identifier): ?array
     {
         foreach ($bills as $record) {
             if (BillIdentifier::matches($record, $identifier)) {

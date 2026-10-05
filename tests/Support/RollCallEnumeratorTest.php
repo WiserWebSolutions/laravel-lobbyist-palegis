@@ -2,8 +2,10 @@
 
 namespace WiserWebSolutions\LaravelPalegis\Tests\Support;
 
+use Illuminate\Http\Client\Factory;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
 use WiserWebSolutions\LaravelPalegis\Support\RollCallEnumerator;
 use WiserWebSolutions\LaravelPalegis\Tests\TestCase;
 
@@ -129,5 +131,34 @@ class RollCallEnumeratorTest extends TestCase
 
         Http::assertSent(fn ($request) => str_contains((string) $request->url(), 'sessYr=2007')
             && str_contains((string) $request->url(), 'sessInd=1'));
+    }
+
+    public function test_probe_propagates_network_and_parsing_failures(): void
+    {
+        foreach ([Http::response('unavailable', 503), Http::response('unexpected page', 200), Http::failedConnection()] as $response) {
+            Http::swap(new Factory);
+            Http::preventStrayRequests();
+            Http::fake(['www.palegis.us/*' => $response]);
+            try {
+                $this->enumerator()->probe('house', '2025_0', 1);
+                $this->fail('An unavailable or unparseable vote must not be confirmed absent.');
+            } catch (PalegisException $exception) {
+                $this->assertNotSame(404, $exception->getCode());
+            }
+        }
+    }
+
+    public function test_probe_confirms_404_but_never_caches_absence(): void
+    {
+        Http::fake(['www.palegis.us/*' => Http::sequence()->push('', 404)->push($this->page('17'))]);
+        $this->assertNull($this->enumerator()->probe('house', '2025_0', 2));
+        $this->assertSame(2, $this->enumerator()->probe('house', '2025_0', 2)['rc_num']);
+    }
+
+    public function test_probe_refuses_to_cross_the_safety_ceiling(): void
+    {
+        $this->expectException(PalegisException::class);
+        $this->expectExceptionMessage('safety ceiling');
+        $this->enumerator(hardCeiling: 5)->probe('house', '2025_0', 6);
     }
 }

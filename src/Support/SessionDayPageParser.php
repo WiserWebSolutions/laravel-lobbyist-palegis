@@ -49,7 +49,7 @@ class SessionDayPageParser
      */
     public static function parse(string $html, string $baseUrl = 'https://www.palegis.us'): array
     {
-        if (! preg_match_all(self::DATE_BUTTON_PATTERN, $html, $matches, PREG_SET_ORDER) || $matches === []) {
+        if (! preg_match_all(self::DATE_BUTTON_PATTERN, $html, $matches, PREG_SET_ORDER)) {
             throw new PalegisException(
                 'No session days found on the page. palegis.us may have redesigned it -- '
                 .'SessionDayPageParser expects a <a>/<button class="dateBtn" aria-label="link for MM/DD/YYYY"> per day.'

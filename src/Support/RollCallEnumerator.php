@@ -76,6 +76,40 @@ class RollCallEnumerator
     /**
      * @return array{session_year: ?string, session_index: ?string, date: ?string, time: ?string, bill: ?array, action: ?string, tallies: array<string, int>, positions: list<array>}|null
      */
+    /** @return array<string, mixed>|null */
+    public function probe(string $chamber, string $session, int $rcNum): ?array
+    {
+        if ($rcNum < 1 || $rcNum > $this->hardCeiling) {
+            throw new PalegisException('Roll-call traversal reached its safety ceiling.');
+        }
+        $key = $this->cacheKey($chamber, $session, $rcNum);
+        $cached = $this->cache->get($key);
+        if (is_array($cached)) {
+            return ['rc_num' => $rcNum, ...$cached];
+        }
+        try {
+            $response = $this->fetchResponse($this->url($chamber, $session, $rcNum));
+            $body = $response->body();
+            $uri = $response->effectiveUri();
+            if ($uri !== null && $uri->getHost() === 'www.palegis.us' && $uri->getPath() === '/'.$chamber.'/roll-calls') {
+                parse_str($uri->getQuery(), $query);
+                [$year, $index] = array_pad(explode('_', $session, 2), 2, '0');
+                if (($query['sessYr'] ?? null) === $year && ($query['sessInd'] ?? null) === $index) {
+                    return null;
+                }
+            }
+        } catch (PalegisException $exception) {
+            if ($exception->getCode() === 404) {
+                return null;
+            }
+            throw $exception;
+        }
+        $record = RollCallPageParser::parse($body);
+        $this->cache->forever($key, $record);
+
+        return ['rc_num' => $rcNum, ...$record];
+    }
+
     private function recordFor(string $chamber, string $session, int $rcNum): ?array
     {
         $key = $this->cacheKey($chamber, $session, $rcNum);

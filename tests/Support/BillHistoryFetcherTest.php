@@ -96,4 +96,35 @@ class BillHistoryFetcherTest extends TestCase
 
         iterator_to_array((new BillHistoryFetcher)->fetchStream('2025_0'), false);
     }
+
+    public function test_metadata_reads_only_the_archive_header(): void
+    {
+        $this->fakeBillHistory();
+        $metadata = (new BillHistoryFetcher)->metadata('2025_0');
+        $this->assertSame(2, $metadata['total']);
+        $this->assertSame('2025_0', $metadata['session']);
+        $this->assertArrayNotHasKey('bills', $metadata);
+    }
+
+    public function test_download_failures_leave_no_partial_archive(): void
+    {
+        $before = glob(sys_get_temp_dir().'/palegis_bh_*');
+        Http::fake(['www.palegis.us/*' => Http::response('partial invalid data', 503)]);
+        try {
+            iterator_to_array((new BillHistoryFetcher)->fetchStream('2025_0'));
+            $this->fail('Expected the download to fail.');
+        } catch (PalegisException) {
+            $this->assertSame($before, glob(sys_get_temp_dir().'/palegis_bh_*'));
+        }
+    }
+
+    public function test_abandoned_streams_clean_up_extracted_files(): void
+    {
+        $this->fakeBillHistory();
+        $before = glob(sys_get_temp_dir().'/palegis_bh_*');
+        $records = (new BillHistoryFetcher)->fetchStream('2025_0');
+        $records->rewind();
+        unset($records);
+        $this->assertSame($before, glob(sys_get_temp_dir().'/palegis_bh_*'));
+    }
 }

@@ -2,8 +2,10 @@
 
 namespace WiserWebSolutions\LaravelPalegis\Tests\Support;
 
+use Illuminate\Http\Client\Factory;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
 use WiserWebSolutions\LaravelPalegis\Support\CommitteeRollCallEnumerator;
 use WiserWebSolutions\LaravelPalegis\Tests\TestCase;
 
@@ -102,5 +104,26 @@ class CommitteeRollCallEnumeratorTest extends TestCase
 
         $this->assertSame(['year' => '2025', 'body' => 'H', 'type' => 'B', 'number' => '1'], $one[0]['bill']);
         $this->assertSame(['year' => '2025', 'body' => 'H', 'type' => 'B', 'number' => '2'], $two[0]['bill']);
+    }
+
+    public function test_probe_recognizes_the_sources_explicit_absence_page(): void
+    {
+        Http::fake(['www.palegis.us/*' => Http::response('<div class="alert">Could not locate this committee vote. New Search</div>')]);
+        $this->assertNull($this->enumerator()->probe('house', '2025_0', '64', 2));
+    }
+
+    public function test_probe_rejects_unexpected_success_pages_and_service_errors(): void
+    {
+        foreach ([200, 503] as $status) {
+            Http::swap(new Factory);
+            Http::preventStrayRequests();
+            Http::fake(['www.palegis.us/*' => Http::response('unavailable', $status)]);
+            try {
+                $this->enumerator()->probe('house', '2025_0', '64', 2);
+                $this->fail('A failed request must not finish a committee stream.');
+            } catch (PalegisException $exception) {
+                $this->assertNotSame(404, $exception->getCode());
+            }
+        }
     }
 }

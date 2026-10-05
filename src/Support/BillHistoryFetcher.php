@@ -48,6 +48,37 @@ class BillHistoryFetcher
      *
      * @throws PalegisException When the archive or XML is invalid
      */
+    /** @return array{export_date: string, total: int, session: string} */
+    public function metadata(string $session): array
+    {
+        $zip = $this->downloadZip($session);
+        try {
+            $xml = $this->extractXmlToTempFile($zip);
+        } finally {
+            @unlink($zip);
+        }
+        $reader = new \XMLReader;
+        try {
+            if (! $reader->open($xml)) {
+                throw new PalegisException('Invalid XML in Bill History export');
+            }
+            while ($reader->read()) {
+                if ($reader->nodeType === \XMLReader::ELEMENT && $reader->name === 'historyExport') {
+                    $total = $reader->getAttribute('totalDocuments');
+                    if ($total === null || ! ctype_digit($total)) {
+                        throw new PalegisException('Missing document count in Bill History export');
+                    }
+
+                    return ['export_date' => $reader->getAttribute('exportDate') ?? '', 'total' => (int) $total, 'session' => $session];
+                }
+            }
+            throw new PalegisException('Missing Bill History export header');
+        } finally {
+            $reader->close();
+            @unlink($xml);
+        }
+    }
+
     public function fetch(string $session): array
     {
         $bills = $this->fetchStream($session);
@@ -55,8 +86,8 @@ class BillHistoryFetcher
         $meta = $bills->getReturn();
 
         return [
-            'export_date' => $meta['export_date'] ?? '',
-            'total' => $meta['total'] ?? count($collected),
+            'export_date' => $meta['export_date'],
+            'total' => $meta['total'],
             'session' => $session,
             'bills' => $collected,
         ];
@@ -104,19 +135,19 @@ class BillHistoryFetcher
      */
     protected function downloadZip(string $session): string
     {
-        $body = $this->fetchBody(
-            $this->url($session),
-            "The session [{$session}] may be invalid or not yet published. "
-            ."Session ids look like '2025_0' (regular) or '2025_1' (special session)."
-        );
-
         $tmp = tempnam(sys_get_temp_dir(), 'palegis_bh_zip_');
-
         if ($tmp === false) {
             throw new PalegisException('Unable to create a temp file for the Bill History archive');
         }
-
-        file_put_contents($tmp, $body);
+        try {
+            $this->fetchResponse($this->url($session), "The session [{$session}] may be invalid or not yet published.", [
+                'sink' => $tmp,
+                'timeout' => $this->request['download_timeout'] ?? 90,
+            ]);
+        } catch (\Throwable $exception) {
+            @unlink($tmp);
+            throw $exception;
+        }
 
         return $tmp;
     }
@@ -175,10 +206,25 @@ class BillHistoryFetcher
                 throw new PalegisException('Unable to create a temp file for the Bill History XML');
             }
 
-            $dest = fopen($destPath, 'wb');
-            stream_copy_to_stream($source, $dest);
-            fclose($source);
-            fclose($dest);
+            $dest = false;
+            try {
+                $dest = fopen($destPath, 'wb');
+                if ($dest === false || stream_copy_to_stream($source, $dest) === false) {
+                    throw new PalegisException('Unable to extract the Bill History XML');
+                }
+            } catch (\Throwable $exception) {
+                if (is_resource($dest)) {
+                    fclose($dest);
+                    $dest = false;
+                }
+                @unlink($destPath);
+                throw $exception;
+            } finally {
+                fclose($source);
+                if (is_resource($dest)) {
+                    fclose($dest);
+                }
+            }
 
             return $destPath;
         } finally {

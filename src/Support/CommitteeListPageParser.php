@@ -35,7 +35,7 @@ class CommitteeListPageParser
      */
     public static function parse(string $html): array
     {
-        if (! preg_match_all(self::LINK_PATTERN, $html, $matches, PREG_SET_ORDER) || $matches === []) {
+        if (! preg_match_all(self::LINK_PATTERN, $html, $matches, PREG_SET_ORDER)) {
             throw new PalegisException(
                 'No committees found on the page. palegis.us may have redesigned it -- '
                 .'CommitteeListPageParser expects a <a href="/{chamber}/committees/{code}/{slug}" class="committee ..."> per committee.'

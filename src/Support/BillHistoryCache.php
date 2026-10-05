@@ -19,6 +19,17 @@ class BillHistoryCache
         protected readonly int $chunkSize = 250,
     ) {}
 
+    /** @return array{export_date: string, total: int, session: string}|null */
+    public function metadata(string $session): ?array
+    {
+        $index = $this->store->get($this->indexKey($session));
+        if (! is_array($index) || ! isset($index['export_date'], $index['total'], $index['bill_ids'])) {
+            return null;
+        }
+
+        return ['export_date' => $index['export_date'], 'total' => $index['total'], 'session' => $session];
+    }
+
     public function hasIndex(string $session): bool
     {
         return $this->store->has($this->indexKey($session));
