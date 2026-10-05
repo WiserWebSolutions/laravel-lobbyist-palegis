@@ -313,9 +313,9 @@ class PalegisDriver extends AbstractDriver implements BillChangeProvider, BillLo
     /**
      * Every Bill History Data session published on palegis.us, back to 1969.
      */
-    public function datasets(): DatasetCollection
+    public function datasets(?int $ttl = null): DatasetCollection
     {
-        $sessions = $this->client->getBillHistorySessions();
+        $sessions = $this->client->getBillHistorySessions($ttl);
 
         return new DatasetCollection(array_map(
             fn (array $row): Dataset => new Dataset(meta: [
