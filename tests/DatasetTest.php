@@ -103,6 +103,19 @@ class DatasetTest extends TestCase
         $this->assertSame('09/16/2026 07:31 PM', $dataset->hash);
     }
 
+    public function test_dataset_discovery_can_bypass_a_cached_archive_revision(): void
+    {
+        config(['palegis.cache.enabled' => true, 'palegis.cache.store' => 'array', 'palegis.cache.ttl' => 3600]);
+        $page = '<table id="billHistoryDataTable"><tbody><tr><td><a href="/data/file?documentType=BillHistoryData&amp;session=2025_0" data-last-updated="older">2025-2026 Regular Session</a></td></tr></tbody></table>';
+        Http::fake(['www.palegis.us/data' => Http::sequence()->push($page)->push(str_replace('older', 'newer', $page))]);
+        $driver = $this->driver()->setStateContext('PA');
+
+        $this->assertSame('older', $driver->datasets()->first()->hash);
+        $this->assertSame('older', $driver->datasets()->first()->hash);
+        $this->assertSame('newer', $driver->datasets(ttl: 0)->first()->hash);
+        Http::assertSentCount(2);
+    }
+
     public function test_dataset_opens_a_dataset_archive(): void
     {
         $this->fakeDataPage();
