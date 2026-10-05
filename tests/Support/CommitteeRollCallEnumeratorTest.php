@@ -38,6 +38,57 @@ class CommitteeRollCallEnumeratorTest extends TestCase
         HTML;
     }
 
+    private function listPage(array $numbers, int $count): string
+    {
+        $links = '';
+        foreach ($numbers as $number) {
+            $links .= '<a href="/house/committees/roll-call-votes/vote-list/vote-summary?sessind=0&amp;committeecode=64&amp;rollcallid='.$number.'&amp;sessyr=2025">Vote</a>';
+        }
+
+        return '<div id="recentVotesWidget">Committee Votes <span>'.$count.'</span></div>'.$links;
+    }
+
+    public function test_numbers_reads_the_complete_sparse_index_and_deduplicates_links(): void
+    {
+        Http::fake(['www.palegis.us/*' => Http::response($this->listPage([1920, 14, 117, 1920], 3))]);
+
+        $this->assertSame([14, 117, 1920], $this->enumerator()->numbers('house', '2025_0', '64'));
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'viewall=true'));
+    }
+
+    public function test_numbers_distinguishes_a_confirmed_empty_index_from_a_redesigned_page(): void
+    {
+        Http::fake(['www.palegis.us/*' => Http::sequence()->push($this->listPage([], 0))->push('<h1>Unavailable</h1>')]);
+        $this->assertSame([], $this->enumerator()->numbers('house', '2025_0', '64'));
+        $this->expectException(PalegisException::class);
+        $this->expectExceptionMessage('Missing committee vote-list count');
+        $this->enumerator()->numbers('house', '2025_0', '64');
+    }
+
+    public function test_numbers_rejects_truncated_indexes(): void
+    {
+        Http::fake(['www.palegis.us/*' => Http::response($this->listPage([14], 101))]);
+        $this->expectException(PalegisException::class);
+        $this->expectExceptionMessage('count does not match');
+        $this->enumerator()->numbers('house', '2025_0', '64');
+    }
+
+    public function test_numbers_rejects_a_different_committee_or_session(): void
+    {
+        Http::fake(['www.palegis.us/*' => Http::response(str_replace('committeecode=64', 'committeecode=62', $this->listPage([14], 1)))]);
+        $this->expectException(PalegisException::class);
+        $this->expectExceptionMessage('do not match');
+        $this->enumerator()->numbers('house', '2025_0', '64');
+    }
+
+    public function test_numbers_rejects_a_published_vote_above_the_traversal_ceiling(): void
+    {
+        Http::fake(['www.palegis.us/*' => Http::response($this->listPage([5001], 1))]);
+        $this->expectException(PalegisException::class);
+        $this->expectExceptionMessage('safety ceiling');
+        $this->enumerator()->numbers('house', '2025_0', '64');
+    }
+
     public function test_walk_yields_records_scoped_to_one_committee(): void
     {
         Http::fake([
