@@ -253,6 +253,7 @@ class BillHistoryFetcher
         }
 
         $meta = ['export_date' => '', 'total' => 0];
+        $hasHeader = false;
 
         try {
             while ($reader->read()) {
@@ -261,8 +262,13 @@ class BillHistoryFetcher
                 }
 
                 if ($reader->name === 'historyExport') {
+                    $total = $reader->getAttribute('totalDocuments');
+                    if ($total === null || ! ctype_digit($total)) {
+                        throw new PalegisException('Missing document count in Bill History export');
+                    }
+                    $hasHeader = true;
                     $meta['export_date'] = (string) $reader->getAttribute('exportDate');
-                    $meta['total'] = (int) $reader->getAttribute('totalDocuments');
+                    $meta['total'] = (int) $total;
 
                     continue;
                 }
@@ -284,6 +290,10 @@ class BillHistoryFetcher
 
             if (libxml_get_errors() !== []) {
                 throw new PalegisException('Invalid XML in Bill History export');
+            }
+
+            if (! $hasHeader) {
+                throw new PalegisException('Missing Bill History export header');
             }
         } finally {
             $reader->close();
