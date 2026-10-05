@@ -38,7 +38,7 @@ class DataPageParser
      */
     public static function parse(string $html): array
     {
-        if (! preg_match_all(self::ROW_PATTERN, $html, $matches, PREG_SET_ORDER) || $matches === []) {
+        if (! preg_match_all(self::ROW_PATTERN, $html, $matches, PREG_SET_ORDER)) {
             throw new PalegisException(
                 'No Bill History Data sessions found on the page. palegis.us may have redesigned '
                 .'it -- DataPageParser expects a <a href="...documentType=BillHistoryData...session=..." '

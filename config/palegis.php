@@ -86,6 +86,8 @@ return [
     |--------------------------------------------------------------------------
     */
     'request' => [
+        'connect_timeout' => (int) env('PALEGIS_CONNECT_TIMEOUT', 5),
+        'download_timeout' => (int) env('PALEGIS_DOWNLOAD_TIMEOUT', 90),
         'timeout' => (int) env('PALEGIS_TIMEOUT', 30),
         'retry_times' => (int) env('PALEGIS_RETRY_TIMES', 2),
         'retry_sleep_ms' => (int) env('PALEGIS_RETRY_SLEEP_MS', 200),

@@ -135,7 +135,7 @@ XML;
         $zipBytes = $this->zipString('PA-Bill-History-2025-RegularSession.xml', $xml);
 
         Http::fake([
-            'www.palegis.us/data/file*' => Http::response($zipBytes, 200),
+            'www.palegis.us/data/file*' => fn () => Http::response($zipBytes, 200),
         ]);
     }
 

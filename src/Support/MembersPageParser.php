@@ -47,7 +47,7 @@ class MembersPageParser
      */
     public static function parse(string $html, string $baseUrl = 'https://www.palegis.us'): array
     {
-        if (! preg_match_all(self::CARD_PATTERN, $html, $matches, PREG_SET_ORDER) || $matches === []) {
+        if (! preg_match_all(self::CARD_PATTERN, $html, $matches, PREG_SET_ORDER)) {
             throw new PalegisException(
                 'No members found on the page. palegis.us may have redesigned it -- '
                 .'MembersPageParser expects a <div class="... member ..." data-name="..." ...> per member.'

@@ -193,4 +193,35 @@ class BillHistoryTest extends TestCase
         $this->assertCount(2, $bills);
         Http::assertSentCount(2);
     }
+
+    public function test_metadata_and_cold_iteration_do_not_materialize_the_full_session(): void
+    {
+        $this->enableCache();
+        $this->fakeBillHistory();
+        $client = new class extends LaravelPalegis
+        {
+            public function getBillHistory(?string $session = null, ?int $ttl = null): array
+            {
+                throw new \RuntimeException('Full session materialization is forbidden.');
+            }
+
+            public function syncBillHistory(?string $session = null, ?int $ttl = null): array
+            {
+                throw new \RuntimeException('Full session materialization is forbidden.');
+            }
+        };
+        $this->assertSame(2, $client->getBillHistoryMetadata('2025_0')['total']);
+        $this->assertCount(2, iterator_to_array($client->eachBillHistoryRecord('2025_0')));
+        $this->assertSame(2, $client->warmBillHistoryCache('2025_0')['total']);
+        Http::assertSentCount(2);
+    }
+
+    public function test_disabled_cache_still_streams_iteration_and_header_metadata(): void
+    {
+        $this->fakeBillHistory();
+        $client = new LaravelPalegis;
+        $this->assertSame(2, $client->getBillHistoryMetadata('2025_0')['total']);
+        $this->assertCount(2, iterator_to_array($client->eachBillHistoryRecord('2025_0')));
+        $this->assertFalse(Cache::store('array')->has('palegis:bill-history:2025_0:index'));
+    }
 }

@@ -111,7 +111,7 @@ class PalegisSessionArchive implements DatasetArchive
         // which is exactly the expensive work this method exists to avoid
         // paying twice. The progress line built from this undercounts votes
         // rather than walking the chamber twice to report a true figure.
-        $total = $this->client->getBillHistory($this->session)['total'] ?? 0;
+        $total = $this->client->getBillHistoryMetadata($this->session)['total'] ?? 0;
 
         return ['bills' => $total, 'votes' => 0, 'people' => $this->roster->count()];
     }

@@ -59,7 +59,7 @@ class CommitteeRollCallPageParser
      */
     public static function parse(string $html): array
     {
-        if (! preg_match_all(self::MEMBER_PATTERN, $html, $matches, PREG_SET_ORDER) || $matches === []) {
+        if (! preg_match_all(self::MEMBER_PATTERN, $html, $matches, PREG_SET_ORDER)) {
             throw new PalegisException(
                 'No members found on the committee roll call page. Either palegis.us redesigned it, or '
                 .'this rollcallid does not belong to the requested committeecode -- '
