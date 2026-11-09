@@ -6,12 +6,14 @@ use Illuminate\Support\Facades\Cache;
 use WiserWebSolutions\LaravelPalegis\Exceptions\PalegisException;
 use WiserWebSolutions\LaravelPalegis\Support\BillHistoryCacheMiss;
 use WiserWebSolutions\LaravelPalegis\Support\CommitteeRollCallEnumerator;
+use WiserWebSolutions\LaravelPalegis\Support\PalegisDocumentMapper;
 use WiserWebSolutions\LaravelPalegis\Support\PalegisMapper;
 use WiserWebSolutions\LaravelPalegis\Support\PalegisSessionArchive;
 use WiserWebSolutions\LaravelPalegis\Support\RollCallEnumerator;
 use WiserWebSolutions\LaravelPalegis\Support\SessionDayPageParser;
 use WiserWebSolutions\Lobbyist\Contracts\DatasetArchive;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillChangeProvider;
+use WiserWebSolutions\Lobbyist\Contracts\Providers\BillDocumentProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillTextHistoryLookup;
@@ -22,10 +24,13 @@ use WiserWebSolutions\Lobbyist\Contracts\Providers\CommitteeScheduleProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\DatasetLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\DatasetProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\LegislatorProvider;
+use WiserWebSolutions\Lobbyist\Contracts\Providers\SessionLegislatorProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\SessionProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\VoteProvider;
 use WiserWebSolutions\Lobbyist\Data\Bill;
 use WiserWebSolutions\Lobbyist\Data\BillCollection;
+use WiserWebSolutions\Lobbyist\Data\BillDocumentCollection;
+use WiserWebSolutions\Lobbyist\Data\BillDocuments;
 use WiserWebSolutions\Lobbyist\Data\BillText;
 use WiserWebSolutions\Lobbyist\Data\BillTextCollection;
 use WiserWebSolutions\Lobbyist\Data\ChamberSessionDayCollection;
@@ -37,6 +42,7 @@ use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\LegislatorCollection;
 use WiserWebSolutions\Lobbyist\Data\SessionCollection;
 use WiserWebSolutions\Lobbyist\Data\VoteCollection;
+use WiserWebSolutions\Lobbyist\Enums\BillDocumentType;
 use WiserWebSolutions\Lobbyist\Enums\Chamber;
 use WiserWebSolutions\Lobbyist\Enums\StateEnum;
 use WiserWebSolutions\Lobbyist\Exceptions\UnsupportedOperationException;
@@ -55,7 +61,7 @@ use WiserWebSolutions\Lobbyist\Support\AbstractDriver;
  * via {@see AbstractDriver}. {@see legislators()} merges the House and Senate
  * members feeds; {@see representatives()}/{@see senators()} are that same list
  * filtered by chamber. Feeds without a core-DTO mapping (bill floor
- * calendars, journals, amendments, memos, …) are available on the
+ * calendars, journals, amendments, …) are available on the
  * underlying {@see LaravelPalegis} client.
  *
  * {@see legislatorsForSession()} (and its chamber-filtered
@@ -97,8 +103,15 @@ use WiserWebSolutions\Lobbyist\Support\AbstractDriver;
  * bill's {@see Bill::$changeHash} (its `lastUpdate` from the export), and
  * there is no cheaper listing this source offers.
  */
-class PalegisDriver extends AbstractDriver implements BillChangeProvider, BillLookup, BillProvider, BillTextHistoryLookup, BillTextLookup, ChamberSessionScheduleProvider, CommitteeAssignmentProvider, CommitteeScheduleProvider, DatasetLookup, DatasetProvider, LegislatorProvider, SessionProvider, VoteProvider
+class PalegisDriver extends AbstractDriver implements BillChangeProvider, BillDocumentProvider, BillLookup, BillProvider, BillTextHistoryLookup, BillTextLookup, ChamberSessionScheduleProvider, CommitteeAssignmentProvider, CommitteeScheduleProvider, DatasetLookup, DatasetProvider, LegislatorProvider, SessionLegislatorProvider, SessionProvider, VoteProvider
 {
+    protected string $provider = 'palegis.us';
+
+    public function jurisdictions(): array
+    {
+        return ['PA'];
+    }
+
     /** @var array<string, Chamber> */
     private const CHAMBERS = [
         'house' => Chamber::House,
@@ -137,6 +150,26 @@ class PalegisDriver extends AbstractDriver implements BillChangeProvider, BillLo
     public function bill(string|int $identifier): Bill
     {
         return PalegisMapper::billFromHistory($this->findBillRecord($identifier));
+    }
+
+    public function billDocuments(Bill|int|string $bill): BillDocuments
+    {
+        $bill = $bill instanceof Bill ? $bill : $this->bill($bill);
+        $result = BillDocuments::forBill($bill,
+            [BillDocumentType::CosponsorshipMemo]);
+        if ($bill->memoUrl === null) {
+            return $result;
+        }
+        parse_str((string) parse_url($bill->memoUrl, PHP_URL_QUERY), $query);
+        $query = array_change_key_case($query, CASE_LOWER);
+        $id = $query['memoid'] ?? null;
+        if (! is_string($id) || ! ctype_digit($id) || $bill->chamber === null) {
+            return $result;
+        }
+        $record = $this->client->getCosponsorshipMemo($bill->chamber->value, $id);
+        $document = PalegisDocumentMapper::memo($record, $bill);
+
+        return new BillDocuments(new BillDocumentCollection([$document]), $result->coverage);
     }
 
     /**
@@ -281,8 +314,9 @@ class PalegisDriver extends AbstractDriver implements BillChangeProvider, BillLo
      *                                2007-2008 session); null gets the current
      *                                roster.
      */
-    public function legislatorsForSession(?string $session = null): LegislatorCollection
+    public function legislatorsForSession(int|string|null $session = null): LegislatorCollection
     {
+        $session = $session === null ? null : (string) $session;
         $legislators = [];
 
         foreach (self::CHAMBERS as $chamber => $enum) {

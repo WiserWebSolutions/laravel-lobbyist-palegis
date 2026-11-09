@@ -150,6 +150,11 @@ composer install
 vendor/bin/phpunit
 ```
 
+
+## Standard bill supporting documents
+
+Requires `laravel-lobbyist` ^1.8. Use `$driver->billDocuments($billOrIdentifier)` for the shared `BillDocuments` result. PA maps linked co-sponsorship memos from both summary and full bill payloads, and retrieves the full published memo when its identifier is available. Documents retain authors, circulation date, attachments, plain text, and a stable `palegis:memo:{chamber}:{id}` identity. The existing `memo`, `memoUrl`, and low-level discovery/detail methods remain available. Unintroduced memo discovery continues to use the PA-specific search methods; it is not inferred from a bill list.
+
 ## License
 
 MIT © Daniel Wiser

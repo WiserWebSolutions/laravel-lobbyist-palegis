@@ -29,28 +29,12 @@ class LaravelPalegisServiceProvider extends ServiceProvider
             ]);
         }
 
-        // Registered under the state abbreviation, lazily and regardless of
-        // provider boot order.
-        //
-        // The name is the mechanism: LobbyistManager::state() prefers a driver
-        // registered under the lowercased abbreviation over the configured
-        // default, so installing this package makes it the PA driver. That is
-        // deliberate -- it is the state's own source, and an application that
-        // installs it is asking for it. An application that wants this driver
-        // by name rather than through state() -- e.g. to configure it as its
-        // bills aggregator -- asks for 'pa' directly; no second name needed.
-        //
-        // What it is not is a superset. This driver now also supports
-        // DatasetProvider/DatasetLookup/BillChangeProvider (see PalegisDriver's
-        // class doc), including floor and committee roll-call votes -- but
-        // still no lookup by arbitrary identifier (GetVote, GetRepresentative,
-        // GetBillTextVersion). An application that needs those must ask its
-        // aggregator for them by name rather than through state(), which is
-        // what supports(Capability::…) is for.
+        // The provider name is canonical; the PA alias preserves existing consumers.
         $this->app->resolving('lobbyist', function (LobbyistManager $manager) {
-            $manager->extend('pa', fn ($app) => new PalegisDriver(
+            $manager->extend('palegis.us', fn ($app) => new PalegisDriver(
                 $app->make(LaravelPalegis::class)
             ));
+            $manager->alias('pa', 'palegis.us');
         });
     }
 }

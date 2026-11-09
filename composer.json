@@ -26,7 +26,7 @@
         "illuminate/http": "^12.0|^13.0",
         "illuminate/support": "^12.0|^13.0",
         "spatie/laravel-data": "^4.20",
-        "wiserwebsolutions/laravel-lobbyist": "^1.7"
+        "wiserwebsolutions/laravel-lobbyist": "^1.8"
     },
     "require-dev": {
         "larastan/larastan": "^2.9||^3.0",
@@ -56,7 +56,10 @@
             "type": "path",
             "url": "../laravel-lobbyist",
             "options": {
-                "symlink": true
+                "symlink": true,
+                "versions": {
+                    "wiserwebsolutions/laravel-lobbyist": "1.8.0"
+                }
             }
         },
         {

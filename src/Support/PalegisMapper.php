@@ -78,20 +78,27 @@ class PalegisMapper
         // text is drafted (a brand-new bill's short title is often still the
         // boilerplate "An Act amending Title 75"). Surfaced as its own field
         // -- `description` keeps preferring it for backwards compatibility.
-        $memo = trim((string) ($record['cosponsorship_memo']['text'] ?? ''));
+        //
+        // The feed reports this and every other free-text field below with
+        // HTML entities left encoded (e.g. "&#8211;" for an en dash), since
+        // it's built from an RSS/XML export -- decoded here so nothing
+        // downstream displays raw markup.
+        $memo = self::decode(trim((string) ($record['cosponsorship_memo']['text'] ?? '')));
+        $shortTitle = self::decode((string) ($record['short_title'] ?? ''));
 
         $meta = [
             'id' => $record['id'] ?? '',
             'number' => $record['designator'] ?? '',
-            'title' => $record['short_title'] ?? '',
-            'description' => $memo !== '' ? $memo : ($record['short_title'] ?? ''),
+            'title' => $shortTitle,
+            'description' => $memo !== '' ? $memo : $shortTitle,
             'memo' => $memo,
             'memo_url' => $record['cosponsorship_memo']['url'] ?? null,
+            'documents' => PalegisDocumentMapper::linkedMemo($record['id'] ?? '', $memo, $record['cosponsorship_memo']['url'] ?? null),
             'state' => StateEnum::PA,
             'chamber' => Chamber::fromString($record['body'] ?? null),
             'status' => $status,
             'status_date' => $statusDate,
-            'last_action' => $lastAction['full_action'] ?? '',
+            'last_action' => self::decode($lastAction['full_action'] ?? ''),
             'last_action_date' => $lastAction['date'] ?? null,
             'url' => $lastPrinters['pdf_url'] ?? '',
             // The export's own per-bill revision marker -- see
@@ -138,7 +145,7 @@ class PalegisMapper
         return array_values(array_map(
             fn (array $sponsor): Legislator => new Legislator(meta: [
                 'id' => $rosterIndex[self::rosterKey($sponsor['body'] ?? null, $sponsor['district'] ?? null)] ?? '',
-                'name' => trim((string) ($sponsor['name'] ?? '')),
+                'name' => self::decode(trim((string) ($sponsor['name'] ?? ''))),
                 'chamber' => Chamber::fromString($sponsor['body'] ?? null),
                 'party' => ($sponsor['party'] ?? '') !== '' ? $sponsor['party'] : null,
                 'district' => ($sponsor['district'] ?? '') !== '' ? $sponsor['district'] : null,
@@ -230,7 +237,7 @@ class PalegisMapper
             'id' => $item['guid'] ?? $item['link'] ?? ($item['title'] ?? ''),
             'chamber' => $chamber,
             'date' => $item['pub_date'] ?? null,
-            'description' => $item['title'] ?? $item['description'] ?? '',
+            'description' => self::decode($item['title'] ?? $item['description'] ?? ''),
             'url' => $item['link'] ?? '',
             'raw' => $item,
         ]);
@@ -259,7 +266,7 @@ class PalegisMapper
             'bill_id' => self::billIdFromRollCallBill($record['bill'] ?? null, $record['session_index'] ?? '0'),
             'chamber' => $chamber,
             'date' => $record['date'] ?? null,
-            'description' => $record['action'] ?? '',
+            'description' => self::decode($record['action'] ?? ''),
             'yea' => $tallies['yea'] ?? null,
             'nay' => $tallies['nay'] ?? null,
             'nv' => $tallies['no_vote'] ?? null,
@@ -303,7 +310,7 @@ class PalegisMapper
             'chamber' => $chamber,
             'committee' => $record['committee'] ?? null,
             'date' => $record['date'] ?? null,
-            'description' => $record['motion'] ?? '',
+            'description' => self::decode($record['motion'] ?? ''),
             'yea' => $tallies['yea'] ?? null,
             'nay' => $tallies['nay'] ?? null,
             'nv' => $tallies['no_vote'] ?? null,
@@ -368,9 +375,9 @@ class PalegisMapper
             // identity in the feed -- the guid embeds a timestamp and changes
             // every time the member updates their page.
             'id' => self::memberId($item['link'] ?? '') ?? ($item['guid'] ?? ''),
-            'name' => $item['title'] ?? '',
+            'name' => self::decode($item['title'] ?? ''),
             'chamber' => $chamber,
-            'role' => $item['description'] ?? null,
+            'role' => self::decode($item['description'] ?? null),
             'party' => self::extension($item, 'Party'),
             'district' => self::extension($item, 'District'),
             'county' => self::extension($item, 'County'),
@@ -411,9 +418,9 @@ class PalegisMapper
     {
         return new Legislator(meta: [
             'id' => $row['id'] ?? '',
-            'name' => $row['name'] ?? '',
+            'name' => self::decode($row['name'] ?? ''),
             'chamber' => $chamber,
-            'role' => ($row['leadership'] ?? '') !== '' ? $row['leadership'] : null,
+            'role' => ($row['leadership'] ?? '') !== '' ? self::decode($row['leadership']) : null,
             'party' => $row['party'] ?? null,
             'district' => $row['district'] ?? null,
             'county' => $row['county'] ?? null,
@@ -439,7 +446,7 @@ class PalegisMapper
     {
         // "Abney, Aerion (D) District 19" -- name, party and district in one
         // string, and the party is nowhere else in this feed.
-        preg_match('/^(?<name>.*?)(?:\s*\((?<party>[A-Z])\))?(?:\s*District\s*(?<district>[0-9]+))?$/', trim((string) ($item['title'] ?? '')), $matches);
+        preg_match('/^(?<name>.*?)(?:\s*\((?<party>[A-Z])\))?(?:\s*District\s*(?<district>[0-9]+))?$/', trim(self::decode((string) ($item['title'] ?? ''))), $matches);
 
         $name = trim($matches['name'] ?? '');
         $party = $matches['party'] ?? null;
@@ -480,7 +487,7 @@ class PalegisMapper
      */
     public static function committeeMeeting(array $item, Chamber $chamber): CommitteeMeeting
     {
-        $committee = self::extension($item, 'Committee') ?? '';
+        $committee = self::decode(self::extension($item, 'Committee') ?? '');
 
         return new CommitteeMeeting(meta: [
             // The feed prefixes the chamber onto the committee name ("HOUSE
@@ -491,8 +498,8 @@ class PalegisMapper
             'chamber' => $chamber,
             'date' => self::extension($item, 'MeetingDate'),
             'time' => self::extension($item, 'MeetingTime'),
-            'location' => self::extension($item, 'Location'),
-            'description' => $item['description'] ?? null,
+            'location' => self::decode(self::extension($item, 'Location')),
+            'description' => self::decode($item['description'] ?? null),
             // The guid carries date, time and committee, which is exactly the
             // identity of the event.
             'identifier' => (string) ($item['guid'] ?? ''),
@@ -559,6 +566,22 @@ class PalegisMapper
         preg_match('/memberId=([0-9]+)/i', $link, $matches);
 
         return $matches[1] ?? null;
+    }
+
+    /**
+     * Decodes HTML entities out of a feed's free-text fields. Both the RSS
+     * feeds and the Bill History export report titles, names and
+     * descriptions with entities left encoded (e.g. "&#8211;" for an en
+     * dash) since they're built from an XML export -- left undecoded, that
+     * markup would reach the app and its users verbatim.
+     */
+    private static function decode(?string $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return $value;
+        }
+
+        return html_entity_decode($value, ENT_QUOTES | ENT_HTML5);
     }
 
     /**

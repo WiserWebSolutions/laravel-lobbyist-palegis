@@ -405,6 +405,23 @@ class PalegisMapperTest extends TestCase
         $this->assertSame('May 13, 2026 12:05:00 PM EDT', $bill->changeHash);
     }
 
+    public function test_bill_from_history_decodes_html_entities_in_title_and_last_action(): void
+    {
+        $record = $this->billRecord();
+        $record['short_title'] = 'Wear Purple Day - February 19 &#8211; Remembering Peyton Walker';
+        $record['actions'][] = [
+            'sequence' => '03',
+            'verb' => 'Adopted',
+            'full_action' => 'Adopted &#8211; Resolution',
+            'date' => '03/13/25',
+        ];
+
+        $bill = PalegisMapper::billFromHistory($record);
+
+        $this->assertSame('Wear Purple Day - February 19 – Remembering Peyton Walker', $bill->title);
+        $this->assertSame('Adopted – Resolution', $bill->lastAction);
+    }
+
     public function test_bill_from_history_falls_back_to_the_short_title_with_no_cosponsorship_memo(): void
     {
         $bill = PalegisMapper::billFromHistory($this->billRecord());
